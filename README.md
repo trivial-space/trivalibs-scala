@@ -3,14 +3,6 @@
 A collection of libraries for **interactive graphics on the web**, written in
 Scala.js.
 
-This is the Scala line of trivalibs and the active one for web work. Its
-painter is a port of the [trivalibs-rs](https://github.com/trivial-space/trivalibs-rs)
-painter with a similar API, plus the ergonomics Scala allows. It targets
-Scala.js and WebGPU in the browser only; trivalibs-rs remains the
-multi-target/native line. Main consumer:
-[sketches-scala](https://github.com/trivial-space/sketches-scala), live at
-[sketches.trivialspace.net](https://sketches.trivialspace.net).
-
 > **Beta** — the API is converging toward stabilization. The two halves of the
 > library, the **Painter** (GPU rendering) and the **Preact bindings**
 > (interactive DOM), are now roughly aligned and being polished together.
@@ -245,6 +237,27 @@ server:
 
 Note the **dynamic port**: each Metals restart rewrites `.mcp.json`, so sessions
 started earlier lose the tools — `/mcp` → reconnect, or restart the session.
+
+## Background
+
+trivalibs is the toolkit of [trivial space](https://www.trivialspace.net), an
+art project started in 2012 to explore the web as a presentation platform for
+virtual art spaces. After a first prototype and exhibition in 2013, the focus
+shifted to the tools for building such spaces by code: a live coding workflow
+with hot code and shader reloading and preserved application state, carried
+through a TypeScript WebGL painter, Rust libraries compiled to WebAssembly, and
+a Rust WGPU painter.
+
+This Scala library is the culmination of that work. It brings the
+live-reloadable workflow and highly expressive graphics exploration together in
+one typed language, from GPU shaders to the UI around the canvas. The research
+into virtual art spaces continues here, in the same philosophy as when trivial
+space started. Current work is live at
+[sketches.trivialspace.net](https://sketches.trivialspace.net).
+
+Its direct predecessor, [trivalibs-rs](https://github.com/trivial-space/trivalibs-rs),
+remains an alternative for native targets, but is currently not actively
+developed.
 
 ## License
 
