@@ -1,7 +1,15 @@
-# Scala trivalibs
+# trivalibs-scala
 
 A collection of libraries for **interactive graphics on the web**, written in
 Scala.js.
+
+This is the Scala line of trivalibs and the active one for web work. Its
+painter is a port of the [trivalibs-rs](https://github.com/trivial-space/trivalibs-rs)
+painter with a similar API, plus the ergonomics Scala allows. It targets
+Scala.js and WebGPU in the browser only; trivalibs-rs remains the
+multi-target/native line. Main consumer:
+[sketches-scala](https://github.com/trivial-space/sketches-scala), live at
+[sketches.trivialspace.net](https://sketches.trivialspace.net).
 
 > **Beta** — the API is converging toward stabilization. The two halves of the
 > library, the **Painter** (GPU rendering) and the **Preact bindings**
@@ -201,7 +209,8 @@ feature-planning docs (for _extending_ it) live under `documents/`.
   flow + render model), the [shader DSL guide](docs/guide/shader-dsl-guide.md)
   (schemas, ctx, ops, `WgslFn`), and [gotchas](docs/guide/gotchas.md).
 - **API reference** — `bun run docs` generates the full Scaladoc site to
-  `docs/api/html/` (gitignored; published to GitHub Pages by CI). Public
+  `docs/api/html/` (gitignored; published by CI to
+  [GitHub Pages](https://trivial-space.github.io/trivalibs-scala/)). Public
   doc-comments cover the painter, shader DSL, buffers, and CPU/GPU math. The
   painter entities (`Panel`/`Layer`/`Shape`/`Form`) are opaque handles —
   construct them via `painter.*` factories and configure via `set`/`bind`.
