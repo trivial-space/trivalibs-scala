@@ -1931,10 +1931,16 @@ object Painter:
               val entry = entries(0)
               val rw: Double = entry.contentRect.width.asInstanceOf[Double]
               val rh: Double = entry.contentRect.height.asInstanceOf[Double]
+              // Writing width/height resets the canvas even to the same value,
+              // wiping a frame painted during setup; the observer's initial
+              // call always reports the size set above.
               if rw > 0 && rh > 0 then
-                canvas.width = rw.toInt
-                canvas.height = rh.toInt
-                painter.fireResize(rw, rh),
+                val w = rw.toInt
+                val h = rh.toInt
+                if w != canvas.width || h != canvas.height then
+                  canvas.width = w
+                  canvas.height = h
+                  painter.fireResize(rw, rh),
             ): js.Function1[js.Array[js.Dynamic], Unit],
           )
         observer.observe(canvas)

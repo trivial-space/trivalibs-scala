@@ -360,6 +360,17 @@ p.show(canvasPanel)
 `p.paintAndShow(panel)` is the one-panel shortcut; `p.draw(shape, clearColor)`
 renders a single shape straight to the canvas with no panel (simple demos).
 
+**Static renderings (no `animate` loop) paint in `onResize`** when the canvas
+can be resized: a resize clears the canvas, and the callback also runs
+immediately, so no separate paint in setup is needed:
+
+```scala
+p.onResize: (w, h) =>
+  p.paintAndShow(panel)
+```
+
+With a fixed-size canvas, a plain `p.paintAndShow(panel)` in setup is enough.
+
 ### Mip chains
 
 `p.panel(mips = true)` (or `mipLevels = N`) allocates a mip chain. By default
