@@ -1,220 +1,152 @@
-# Non-browser hosts — Deno first, NativeScript additive
+# Native-window hosts — Deno windows, NativeScript
 
-**Status: planned, not implemented.** No code in `src/` has been changed for
-this. This document records the design so that the first implementation step
-does not have to re-derive it, and so that the later NativeScript target is a
-pure addition rather than a second refactoring.
+**Status: planned, not scheduled.** A separate issue from offline rendering.
+
+**Depends on**
+[headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md),
+which brings in the host seam (`Surface`, `CanvasSurface`, `Painter.create`,
+`globalThis.navigator.gpu`, `p.animate` scheduled by the surface) and the
+headless `CaptureSurface`. This document covers only what is left: **rendering
+on screen outside a browser**. The trait has to admit these hosts without
+changes; §3.8 of that plan lists the constraints this document puts on it.
 
 ## Motivation
 
-Sketches in the consuming repo were refactored from `@main` to
-`@JSExportTopLevel("sketch")` taking the canvas as a parameter, precisely so a
-sketch never fetches its own canvas from `document`. That removed the _sketch_
-side of the browser coupling. The library side is still browser-only: three
-spots in the painter and one in `animate` assume a DOM.
+Two on-screen hosts are wanted:
 
-Two hosts are wanted, in this order:
-
-1. **Deno** — a real desktop WebGPU runtime with `navigator.gpu` built in
-   ([Deno WebGPU docs](https://docs.deno.com/runtime/desktop/webgpu/)). It runs
-   on the development machine with no mobile toolchain, so it is the cheap
-   place to do the porting work and to get a rendered frame into CI.
+1. **Deno windows** — Deno ≥ 2.9 `deno desktop` gives a native window, and
+   `Deno.UnsafeWindowSurface` gives WebGPU on it. Desktop, no mobile toolchain:
+   the cheap place to prove an on-screen non-browser host.
 2. **NativeScript** — `@nativescript/canvas` exposes WebGPU on Android/iOS
-   (currently the `2.0.0-webgpu.*` prerelease line). This is the actual
-   deployment interest; Deno is the proving ground.
+   (the `2.0.0-webgpu.*` prerelease line). This is the actual deployment
+   interest.
 
-The design constraint that shapes everything below: **adding the NativeScript
-host later must not touch `Painter`, `RenderHost`, or the Deno host.** A new
-file and a new constructor call in the app glue, nothing else.
-
----
-
-## What is browser-coupled today
-
-Verified against the current sources:
-
-| Where                   | Line              | Assumption                                           |
-| ----------------------- | ----------------- | ---------------------------------------------------- |
-| `painter/webgpu.scala`  | 209               | `dom.window.navigator.gpu` — needs `window`          |
-| `painter/webgpu.scala`  | 216               | `canvas.getContext("webgpu")`                        |
-| `painter/painter.scala` | 1918–1921         | `canvas.clientWidth/Height`, writes `.width/.height` |
-| `painter/painter.scala` | 1923–1936         | `new ResizeObserver(...)`                            |
-| `painter/painter.scala` | 94, 108, 117, 120 | `Painter.canvas` is the size source of truth         |
-| `painter/painter.scala` | 1211              | `context.getCurrentTexture()`, no explicit present   |
-| `utils/animate.scala`   | 39, 43            | `requestAnimationFrame` on the global object         |
-
-Of these, only #1 is an outright bug on a non-browser host that otherwise has
-the API: Deno and NativeScript both define `navigator.gpu` but neither defines
-`window`. The rest are genuine capability differences.
-
-**Deliberately out of scope** — these stay browser-only and are the reason
-`base-triangle` (not a room sketch) is the pilot:
-
-- `utils/events/*` (`CanvasInput`, pointer, keyboard) — DOM event targets
-  throughout, reached via `Painter.input`.
-- `dev/dev.scala` — `sessionStorage` plus `window` event listeners.
-- `preact/*` — DOM by definition.
-
-A sketch that calls `p.input` or `trivalibs.dev.*` is not portable, and this
-plan does not try to make it so. Input abstraction is a separate, larger
-design; note that NativeScript will eventually want it (touch), Deno-with-SDL2
-would want it too, and that is the point at which it becomes worth doing.
+If NativeScript turns out to differ too much from the browser / Deno shape, it
+stays deferred; the Deno window surface does not depend on it.
 
 ---
 
-## Design: `RenderHost`
+## Surfaces
 
-`Painter` stops talking to a canvas and talks to a host.
+| Surface                   | `currentTexture`                          | `present`           | `onResize`                                 | `requestFrame`                    |
+| ------------------------- | ----------------------------------------- | ------------------- | ------------------------------------------ | --------------------------------- |
+| `DenoWindowSurface(win)`  | `surface.getContext("webgpu")` context    | `surface.present()` | window `resize` → `surface.resize(w, h)`   | `setTimeout` loop                 |
+| NativeScript              | `CanvasSurface` or a subclass             | to verify           | canvas layout event, to verify             | rAF polyfill, to verify           |
 
-```scala
-trait RenderHost:
-  /** Swap-chain-ish context. `show()` renders into its current texture. */
-  def context: GPUCanvasContext
-  /** Drawable size in physical pixels. */
-  def width: Int
-  def height: Int
-  /** Texture format for the context; hosts may not implement
-    * `getPreferredCanvasFormat()`, so the host decides, with a fallback. */
-  def preferredFormat: String
-  /** Configure the context once the device exists. */
-  def configure(device: GPUDevice, format: String): Unit
-  /** End-of-frame present. No-op in the browser. */
-  def present(): Unit
-  /** Register a resize callback; may never fire on fixed-size hosts. */
-  def onResize(cb: (Double, Double) => Unit): Unit
-  /** Schedule the next frame. */
-  def requestFrame(cb: Double => Unit): Unit
-```
+### Deno (verified against the current docs)
 
-`Painter` gains a `host: RenderHost` field; `width`/`height` delegate to it,
-`show()` ends with `host.present()`, and `Painter.init` no longer knows what a
-canvas is.
+- WebGPU needs `"unstable": ["webgpu"]` in `deno.json`; the desktop window
+  needs `"desktop": { "backend": "raw" }` (not selectable via `--backend`).
+- `win.getNativeWindow()` returns the `Deno.UnsafeWindowSurface`, and **throws
+  unless `navigator.gpu.requestAdapter()` has run first**. So the surface must
+  build its context in `configure(device)`, not in its constructor —
+  `Painter.create` already resolves the device first.
+- `surface.getContext("webgpu")` → `configure({ device, format, alphaMode })`.
+- `surface.width/height` follow `win.getSize()`, updated on the window's
+  `resize` event; `UnsafeWindowSurface.resize(w, h)` exists, so it resizes in
+  place (the old SDL2 question about having to recreate it is moot).
+- `surface.present()` once per frame, after rendering; without it the window
+  stays blank.
+- No `requestAnimationFrame` in the raw backend; the docs loop with
+  `setTimeout(frame, 16)`.
+- Once a surface has been taken, `close()` hides the window instead of
+  destroying it; call `Deno.exit()` to end the process.
 
-### Why no auto-detecting registry
+The older route (SDL2 via `jsr:@divy/sdl2`, `win.windowSurface()`) is
+superseded by `deno desktop`.
 
-The tempting shape is `Painter.init(surface)` with a capability-detection chain
-that picks the host. **Reject it on bundle-size grounds**: detection means every
-host is reachable from the entry point, so Scala.js DCE cannot drop the ones a
-given bundle never uses, and every sketch pays for every host forever. That is
-exactly the kind of cost the library's size discipline exists to prevent.
+### NativeScript (unverified)
 
-Instead the host is **explicit and constructed by the app glue**. A sketch that
-only ever runs in a browser links `BrowserHost` and nothing else; the Deno
-entry point links `DenoHost` and nothing else. Additivity falls out for free —
-`NativeScriptHost` is a file nobody references until an app references it.
+`@nativescript/canvas` follows the browser shape: `canvas.getContext("webgpu")`,
+`configure`, a `requestAnimationFrame` loop. Open:
 
-### Host implementations
+- whether presenting is implicit (browser-like) or an explicit call;
+- whether `requestAnimationFrame` is provided by `@nativescript/canvas`;
+- which event signals a canvas resize;
+- whether `getPreferredCanvasFormat()` exists (fall back to `bgra8unorm`);
+- the prerelease line drifts — pin an exact version.
 
-| Host               | `context`                               | `present()`         | `onResize`             | `requestFrame`             |
-| ------------------ | --------------------------------------- | ------------------- | ---------------------- | -------------------------- |
-| `BrowserHost`      | `canvas.getContext("webgpu")`           | no-op               | `ResizeObserver`       | `requestAnimationFrame`    |
-| `DenoWindowHost`   | `surface.getContext("webgpu")`          | `surface.present()` | SDL2 window event      | driven by the SDL2 loop    |
-| `DenoHeadlessHost` | fake context over an owned `GPUTexture` | no-op               | never fires            | immediate / N-frame driver |
-| `NativeScriptHost` | `canvas.getContext("webgpu")`           | **verify**          | canvas `layoutChanged` | rAF polyfill (**verify**)  |
-
-`BrowserHost` is today's `Painter.init` body moved verbatim behind the trait —
-no behavior change, no sketch change, and it is the whole of phase 0.
-
-`DenoHeadlessHost` is worth the small hack: rather than teaching `show()` about
-a target that has no swap chain, the host hands back an object whose
-`getCurrentTexture()` returns a texture it owns. `show()` stays untouched, and
-the host exposes `readPixels(): js.Promise[Uint8Array]` (via
-`copyTextureToBuffer` + `mapAsync`) so a test can write a PNG. This is what
-makes an automated visual smoke test possible at all.
-
-### `getGPU()` — the one fix that is unconditionally right
-
-```scala
-def getGPU(): js.UndefOr[GPU] =
-  js.Dynamic.global.navigator
-    .asInstanceOf[js.Dynamic]
-    .gpu
-    .asInstanceOf[js.UndefOr[GPU]]
-```
-
-`globalThis.navigator` resolves in browsers, Deno, and NativeScript alike.
-Independent of the rest of this plan and safe to land on its own.
-
-### The frame loop
-
-`animate` reaches for the global `requestAnimationFrame`, which Deno does not
-define. Add `painter.animate(frame)` routing through `host.requestFrame`, and
-leave the free `animate` as the browser convenience it already is. Sketches
-migrate from `animate: tpf =>` to `p.animate: tpf =>` — mechanical, and only
-required for sketches that want to be portable.
-
-### Entry-point signature — the one cross-repo decision
-
-Sketches are currently `def sketch(canvas: HTMLCanvasElement)`. `HTMLCanvasElement`
-is a browser type that a Deno surface will never be. Two options:
-
-1. **Sketch takes a `RenderHost`** (recommended). The glue constructs the host:
-   browser `index.html` does `sketch(new BrowserHost(canvasEl))`, the Deno
-   entry does `sketch(new DenoWindowHost(surface))`, NativeScript does its own.
-   Sketch bodies become genuinely host-agnostic and `Painter.init(host)` is the
-   only init overload that matters. Cost: one more line of glue per host, and a
-   second pass over the sketches in the consuming repo.
-2. **Sketch keeps a widened `opaque type Surface = js.Any`** and `Painter.init`
-   branches internally. Less churn now, but it either reintroduces the
-   detection registry rejected above or pushes the branch into every sketch.
-
-Recommend (1), and note that the `@JSExportTopLevel("sketch")` refactor already
-paid most of the migration cost — the remaining change is the parameter type
-and the glue line.
-
-Keep `Painter.init(canvas: HTMLCanvasElement)` as a browser overload regardless,
-so existing sketches and all of `examples/` keep compiling untouched.
-
-`Painter.input` needs a real DOM canvas. It should live on `BrowserHost` (or
-require one), not on `Painter`, so that a portable sketch cannot silently
-depend on it.
+If the answers are "browser-like", NativeScript is just `CanvasSurface`. A
+subclass with an explicit present is still fine. Anything that needs
+`Surface` or `Painter` changes is the signal to rethink the trait.
 
 ---
+
+### Watched, not planned: Perry / Bloom Engine
+
+[Bloom](https://bloomengine.dev/) (MIT, `@bloomengine/engine` 0.4.x, very
+active) is a raylib-shaped game engine: game code in TypeScript, compiled
+ahead of time by [Perry](https://github.com/PerryTS/perry) (SWC + LLVM →
+native binary; also `--target web/wasm`), rendering in a Rust **wgpu** core.
+
+- **No WebGPU interface for JS.** TypeScript never touches the GPU. It calls
+  ~465 flat `bloom_*` functions declared via Perry's
+  `perry.nativeLibrary.functions` (C ABI on native, `wasm_bindgen` on web):
+  `bloom_begin_drawing`, `bloom_clear_background(r,g,b,a)`, `drawRect`, … The
+  only shader hook is `loadShader(wgslSource): number` — no pipelines,
+  buffers, bind groups or render targets. The painter cannot run on Bloom, and
+  wrapping its API would mean reimplementing the painter on raylib-level calls.
+  Not a target.
+- **Perry itself is the interesting part**: a TS/JS → native compiler that
+  compiles plain `.js`, implements most `node:*` modules, and — per its
+  changelog — complete `bun:ffi` / `node:ffi` C-ABI support (pointers,
+  zero-copy memory views, callbacks). A Perry host would be: Scala.js bundle →
+  Perry binary → a WebGPU JS API over FFI. Perry ships no WebGPU API; the
+  candidate is `bun-webgpu` (Dawn via `bun:ffi`), which may run unchanged on
+  Perry's `bun:ffi`. Native `.node` addons (so node-webgpu) are **not**
+  supported.
+- **Two unknowns, both cheap to test by experiment, neither verified:**
+  1. Scala.js output vs Perry's limits — classes compile to fixed layouts;
+     assigning to `.prototype` and `Object.setPrototypeOf` are unsupported;
+     `Proxy` / `Reflect` are partial. Our `jsMode full` output does exactly
+     the unsupported thing: `sketches/base-triangle/main.js` contains
+     `….prototype = $p` and `….prototype = new $h_O()` (Scala.js class
+     encoding). Likely a blocker unless Perry tolerates it; try `perry
+     compile` on that bundle to find out.
+  2. Whether `bun-webgpu`'s struct marshalling runs on Perry's `bun:ffi`.
+     It also has no window surface, so on-screen output would need a separate
+     surface binding.
+- **What it would buy:** one self-contained native binary, iOS/Android from
+  the same toolchain — overlapping the NativeScript goal. Nothing over
+  Node/Deno/Bun for offline rendering.
+- **Painter impact:** none. A Perry host is just another `GPU` provider plus a
+  `Surface`, which is exactly the seam the headless plan introduces. Revisit if
+  Perry ships WebGPU itself, or if the two experiments above pass.
+
+## Decisions left to this plan
+
+- **Entry-point signature.** Sketches are `sketch(canvas: HTMLCanvasElement)`.
+  An on-screen host has no `HTMLCanvasElement`, so a sketch meant to run on one
+  must take a `Surface` (glue: `sketch(CanvasSurface(canvasEl))`,
+  `sketch(DenoWindowSurface(win))`). Recommended for portable sketches only;
+  `Painter.init(canvas)` stays, so existing sketches and `examples/` keep
+  compiling untouched. The `@JSExportTopLevel("sketch")` refactor already did
+  most of the migration.
+- **Input.** `Painter.input` needs a DOM canvas. On-screen hosts do have
+  users, so this is where an input abstraction becomes worth doing
+  (NativeScript touch, Deno window events). Until then, `input` should live on
+  or require `CanvasSurface`, so a portable sketch can't silently depend on it.
+- **Out of scope, stay browser-only:** `utils/events/*`, `dev/*` (uses
+  `sessionStorage` and `window`), `preact/*`.
 
 ## Phasing
 
-Each phase is independently landable and leaves the library working.
-
-**Phase 0 — host seam, browser only.** Introduce `RenderHost`, implement
-`BrowserHost` from the existing init body, switch `getGPU()` to `globalThis`,
-add `painter.animate`. No behavior change; `examples/` is the regression test.
-Nothing about Deno yet.
-
-**Phase 1 — Deno headless.** `DenoHeadlessHost` + a script that imports a built
-sketch bundle, renders one frame, reads pixels back, writes a PNG. This is the
-cheapest possible proof that the whole pipeline runs with no DOM, and it is the
-piece that can run in CI. Pilot: the triangle example.
-
-**Phase 2 — Deno windowed.** `DenoWindowHost` over
-[`Deno.UnsafeWindowSurface`](https://docs.deno.com/api/deno/~/Deno.UnsafeWindowSurface),
-obtained from SDL2 (`jsr:@divy/sdl2`, `win.windowSurface()`). Adds the explicit
-`present()` and a real resize path, which is where the trait earns itself.
-
-**Phase 3 — NativeScript (later).** New file `NativeScriptHost`, an app under
-the consuming repo, nothing else. If this phase turns out to require edits to
-`RenderHost`, the trait was wrong and that is the signal to revisit.
-
----
-
-## To verify at implementation time
-
-Claims below come from documentation, not from a run on this machine:
-
-- Deno's current flag requirements for WebGPU (`--unstable-webgpu` historically;
-  check against the Deno version in use).
-- Whether `Deno.UnsafeWindowSurface` supports resizing in place or must be
-  recreated when the SDL2 window resizes. This decides how ugly
-  `DenoWindowHost.onResize` is.
-- Whether Deno implements `getPreferredCanvasFormat()`; fall back to
-  `"bgra8unorm"` if not.
-- NativeScript: whether presenting is implicit or an explicit call, whether
-  `requestAnimationFrame` is polyfilled by `@nativescript/canvas`, and whether
-  the canvas exposes a usable resize/layout event.
-- `@nativescript/canvas` WebGPU is a prerelease line — pin an exact version and
-  expect API drift.
+1. `DenoWindowSurface` + a windowed example. Proves explicit present, resize
+   and the `setTimeout` loop against the `Surface` trait.
+2. NativeScript, as an app under the consuming repo plus at most a
+   `CanvasSurface` subclass.
 
 ## Related
 
+- [Deno desktop WebGPU](https://docs.deno.com/runtime/desktop/webgpu/),
+  [`Deno.UnsafeWindowSurface`](https://docs.deno.com/api/deno/~/Deno.UnsafeWindowSurface)
+- [NativeScript canvas overview](https://blog.nativescript.org/nativescript-canvas/),
+  [quick start](https://canvas.nativescript.org/canvas/quick-start),
+  [installation](https://canvas.nativescript.org/canvas/installation)
+- [Bloom Engine](https://bloomengine.dev/) ·
+  [repo](https://github.com/Bloom-Engine/engine) (`docs/web-target.md`,
+  `docs/design-api.md` "the Perry FFI boundary") ·
+  [Perry](https://github.com/PerryTS/perry) ·
+  [Perry limitations](https://docs.perryts.com/language/limitations.html)
 - Consuming-repo entry-point convention (`@JSExportTopLevel("sketch")`, canvas
   passed in) — the graphics repo's `CLAUDE.md`.
-- [NativeScript Canvas installation](https://canvas.nativescript.org/canvas/installation)

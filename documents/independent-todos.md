@@ -4,6 +4,11 @@
 
 ### 🔄 `with_static_texture_data(bytes)` on Panel
 
+> Now planned as Milestone 2 of
+> [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md)
+> (`Pixels` / `TextureSource` panel sources). Remove this entry when M2.0
+> lands.
+
 **Gap:** Rust's `Panel::with_static_texture_data(bytes)` is the canonical way to
 load an image / baked texture into a panel's render target. The Scala Panel has
 no direct equivalent — callers must build a `GPUTexture` with usage
