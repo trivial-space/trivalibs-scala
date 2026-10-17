@@ -757,8 +757,8 @@ given F32Write[Double, F1]:
     fn.set(value)
 ```
 
-This means the `set` API and mesh integration automatically accept any type
-that implements the right math trait — not just the concrete CPU classes.
+This means the `set` API and mesh integration automatically accept any type that
+implements the right math trait — not just the concrete CPU classes.
 
 ---
 
@@ -850,8 +850,9 @@ This inlines to direct `Float32Array` writes at each call site — zero overhead
 - **Iteration**: `FloatArray` should support `for i <- arr.indices do arr(i)...`
   loop pattern. Consider adding `Iterable` conversion like `StructArray`.
   Additionally, investigate zero-allocation iteration via a **shared mutable
-  `FloatRef`** whose `idx` is updated each step — avoids creating a new `FloatRef`
-  per row. API examples:
+  `FloatRef`** whose `idx` is updated each step — avoids creating a new
+  `FloatRef` per row. API examples:
+
   ```scala
   // Zero-alloc: reuses one FloatRef, mutates idx each step
   arr.foreachMutable: ref =>
@@ -861,6 +862,7 @@ This inlines to direct `Float32Array` writes at each call site — zero overhead
   arr.updateMutable(i): ref =>
     ref.field(2).set(newLife)
   ```
+
   Names like `foreachMutable` / `updateMutable` signal that the ref must not be
   stored or reused outside the callback. Deferred to a later phase.
 

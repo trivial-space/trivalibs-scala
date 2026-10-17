@@ -14,10 +14,10 @@ Two milestones:
 1. **Headless painter + render to file.** The painter runs without a DOM, on any
    runtime that hands it a spec-conformant `GPU` object (node-webgpu, Deno, Bun
    once its WebGPU lands). `show()` renders into a CPU-readable frame buffer
-   instead of a canvas; frames accumulate into stills, image sequences, GIFs
-   and videos. Panels can be read back directly — the path for offline-baked
-   static assets that replace today's init-time bakes
-   (`src/utils/bake/Bake.scala` in the consuming repo).
+   instead of a canvas; frames accumulate into stills, image sequences, GIFs and
+   videos. Panels can be read back directly — the path for offline-baked static
+   assets that replace today's init-time bakes (`src/utils/bake/Bake.scala` in
+   the consuming repo).
 2. **Texture sources on panels.** A panel can hold uploaded pixels instead of
    rendered content: raw buffers, `ImageData`, `HTMLImageElement`,
    `ImageBitmap`, canvases, and — through the same interface — video
@@ -27,8 +27,8 @@ Two milestones:
 The design rule running through both: **one pixel currency, `Pixels`, that both
 the output side produces and the input side consumes**, plus the browser's
 native image types as an input-only fast path where they exist. A headless
-pipeline is "Pixels in, Pixels out"; a browser one can additionally hand the
-GPU an image element directly.
+pipeline is "Pixels in, Pixels out"; a browser one can additionally hand the GPU
+an image element directly.
 
 ---
 
@@ -36,13 +36,13 @@ GPU an image element directly.
 
 ### 1.1 Runtimes
 
-| Runtime         | How you get a `GPU`                                                | Backend      | Canvas / surface                                   | Image APIs                                                                  | Status                                                                     |
-| --------------- | ------------------------------------------------------------------ | ------------ | -------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| **Node**        | `import { create } from 'webgpu'` → `create([...options])`         | Dawn         | none                                               | none (no `ImageBitmap`, no `copyExternalImageToTexture` sources)            | npm `webgpu` 0.6.x, Node ≥ 18                                              |
-| **Deno**        | `navigator.gpu` (with `--unstable-webgpu` / `"unstable": ["webgpu"]`) | wgpu         | `Deno.UnsafeWindowSurface` (`getContext("webgpu")`, explicit `present()`, `resize()`); desktop windows from Deno 2.9 `BrowserWindow` | `createImageBitmap(Blob \| ImageData \| ImageBitmap)`; formats + `copyExternalImageToTexture` support **to verify** | unstable flag                                                              |
-| **Bun (future)** | `navigator.gpu` + `GPU*` globals, no flag                         | wgpu-core 30 | **none** ("there is no canvas")                    | `GPUExternalTexture` / `copyExternalImageToTexture` explicitly out of scope | PR [oven-sh/bun#42768](https://github.com/oven-sh/bun/pull/42768) open, being split into a stack |
-| **Bun (today)** | `bun-webgpu` (Dawn via FFI) or `wgpu-polyfill` (wgpu-native)       | Dawn / wgpu  | none                                               | `Bun.Image` decodes/encodes, but takes **encoded** input only (raw RGBA in/out is an open PR) | third-party                                                                |
-| **NativeScript** | `navigator.gpu`                                                   | Metal / Vulkan | `canvas.getContext("webgpu")` — browser-shaped   | asset images, to verify                                                     | `@nativescript/canvas` 2.0 webgpu prerelease                               |
+| Runtime          | How you get a `GPU`                                                   | Backend        | Canvas / surface                                                                                                                     | Image APIs                                                                                                          | Status                                                                                           |
+| ---------------- | --------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Node**         | `import { create } from 'webgpu'` → `create([...options])`            | Dawn           | none                                                                                                                                 | none (no `ImageBitmap`, no `copyExternalImageToTexture` sources)                                                    | npm `webgpu` 0.6.x, Node ≥ 18                                                                    |
+| **Deno**         | `navigator.gpu` (with `--unstable-webgpu` / `"unstable": ["webgpu"]`) | wgpu           | `Deno.UnsafeWindowSurface` (`getContext("webgpu")`, explicit `present()`, `resize()`); desktop windows from Deno 2.9 `BrowserWindow` | `createImageBitmap(Blob \| ImageData \| ImageBitmap)`; formats + `copyExternalImageToTexture` support **to verify** | unstable flag                                                                                    |
+| **Bun (future)** | `navigator.gpu` + `GPU*` globals, no flag                             | wgpu-core 30   | **none** ("there is no canvas")                                                                                                      | `GPUExternalTexture` / `copyExternalImageToTexture` explicitly out of scope                                         | PR [oven-sh/bun#42768](https://github.com/oven-sh/bun/pull/42768) open, being split into a stack |
+| **Bun (today)**  | `bun-webgpu` (Dawn via FFI) or `wgpu-polyfill` (wgpu-native)          | Dawn / wgpu    | none                                                                                                                                 | `Bun.Image` decodes/encodes, but takes **encoded** input only (raw RGBA in/out is an open PR)                       | third-party                                                                                      |
+| **NativeScript** | `navigator.gpu`                                                       | Metal / Vulkan | `canvas.getContext("webgpu")` — browser-shaped                                                                                       | asset images, to verify                                                                                             | `@nativescript/canvas` 2.0 webgpu prerelease                                                     |
 
 Takeaways:
 
@@ -73,27 +73,27 @@ Takeaways:
 WebGPU cannot enumerate adapters. What it offers is a request with hints and a
 description of what you got:
 
-- **Spec, portable:** `requestAdapter({ powerPreference: "high-performance" |
-  "low-power", forceFallbackAdapter, featureLevel })`, then
-  `adapter.info` (`GPUAdapterInfo`: `vendor`, `architecture`, `device`,
+- **Spec, portable:**
+  `requestAdapter({ powerPreference: "high-performance" | "low-power", forceFallbackAdapter, featureLevel })`,
+  then `adapter.info` (`GPUAdapterInfo`: `vendor`, `architecture`, `device`,
   `description`). `forceFallbackAdapter: true` asks for the software adapter
   (SwiftShader in Dawn).
 - **Dawn / node-webgpu, at `create()` time** (README, "dawn node specific
-  options"): `backend=vulkan|opengl|opengles|null|…` and `adapter=<name>`.
-  A non-existent name fails with `no suitable backends found` and prints
+  options"): `backend=vulkan|opengl|opengles|null|…` and `adapter=<name>`. A
+  non-existent name fails with `no suitable backends found` and prints
   `Available adapters: * backend: 'vulkan', name: '…'` — the de facto way to
   enumerate; that name is then passed back verbatim. Same for an invalid
-  `backend`. The README also points at plain `requestAdapter({
-  powerPreference })` as the normal, portable way.
+  `backend`. The README also points at plain
+  `requestAdapter({ powerPreference })` as the normal, portable way.
 - **Deno (wgpu), process env:** `DENO_WEBGPU_BACKEND=vulkan|gl|…` (comma list,
   read in `ext/webgpu/lib.rs` `get_or_init_instance`). No adapter-name option;
   combine with the Vulkan-level selectors below.
 - **Bun:** wgpu-core underneath; whether it exposes a backend env var is **to
   verify** once the PR lands (`WGPU_BACKEND` is wgpu's own convention).
 - **Linux, below WebGPU — works for every runtime on the Vulkan backend:**
-  - `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json` (or
-    `radeon_icd…`, `lvp_icd…` for lavapipe) restricts the Vulkan loader to one
-    ICD. (`VK_ICD_FILENAMES` is the older name.)
+  - `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json` (or `radeon_icd…`,
+    `lvp_icd…` for lavapipe) restricts the Vulkan loader to one ICD.
+    (`VK_ICD_FILENAMES` is the older name.)
   - `MESA_VK_DEVICE_SELECT=list` prints devices; `MESA_VK_DEVICE_SELECT=vid:did`
     picks one (Mesa device-select layer).
   - GL backends: `__GLX_VENDOR_LIBRARY_NAME=nvidia`,
@@ -102,32 +102,31 @@ description of what you got:
 All runtime-level selection happens **before** the `GPU` object exists, so it
 cannot be a painter parameter. The painter's part is: accept an explicit `GPU`
 or `GPUAdapter`, pass the spec hints, **verify** what it got against a
-requirement, and log `adapter.info` so a render never silently runs on
-lavapipe when NVIDIA was intended. See §3.3.
+requirement, and log `adapter.info` so a render never silently runs on lavapipe
+when NVIDIA was intended. See §3.3.
 
 ### 1.3 Images and video as WebGPU textures (browser)
 
 Three upload paths exist:
 
-| Path                                       | Sources                                                                                                   | Result                                     | Notes                                                                                                                                                                         |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queue.writeTexture(dst, data, layout, size)` | any `ArrayBuffer` / typed array                                                                           | regular `GPUTexture`                       | universal, every runtime. `bytesPerRow` has no 256 alignment requirement here (only buffer copies do).                                                                       |
-| `queue.copyExternalImageToTexture(src, dst, size)` | `ImageBitmap`, `ImageData`, `HTMLImageElement`, `HTMLCanvasElement`, `OffscreenCanvas`, `HTMLVideoElement`, `VideoFrame` | regular `GPUTexture`                       | dst usage must include `COPY_DST \| RENDER_ATTACHMENT`; dst format from a fixed list (`rgba8unorm[-srgb]`, `bgra8unorm[-srgb]`, `rgba16float`, `rgba32float`, `r8/rg8unorm`, `r/rg 16/32float`, `rgb10a2unorm`). Options `flipY`, `premultipliedAlpha`, `colorSpace`. Firefox: `VideoFrame` reportedly unsupported here — wrap in `ImageBitmap`. |
-| `device.importExternalTexture({ source })`  | `HTMLVideoElement`, `VideoFrame`                                                                          | `GPUExternalTexture` (`texture_external` in WGSL) | zero-copy (YUV sampled in hardware). Expires: from a video element at the end of the task that used it; from a `VideoFrame` when the frame is closed → bind groups rebuilt every frame. Sample with `textureSampleBaseClampToEdge` / `textureLoad` only, no mips. Not Baseline: listed missing in Firefox 141; Safari status unclear. Not in Bun's PR, not in node-webgpu. |
+| Path                                               | Sources                                                                                                                  | Result                                            | Notes                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queue.writeTexture(dst, data, layout, size)`      | any `ArrayBuffer` / typed array                                                                                          | regular `GPUTexture`                              | universal, every runtime. `bytesPerRow` has no 256 alignment requirement here (only buffer copies do).                                                                                                                                                                                                                                                                     |
+| `queue.copyExternalImageToTexture(src, dst, size)` | `ImageBitmap`, `ImageData`, `HTMLImageElement`, `HTMLCanvasElement`, `OffscreenCanvas`, `HTMLVideoElement`, `VideoFrame` | regular `GPUTexture`                              | dst usage must include `COPY_DST \| RENDER_ATTACHMENT`; dst format from a fixed list (`rgba8unorm[-srgb]`, `bgra8unorm[-srgb]`, `rgba16float`, `rgba32float`, `r8/rg8unorm`, `r/rg 16/32float`, `rgb10a2unorm`). Options `flipY`, `premultipliedAlpha`, `colorSpace`. Firefox: `VideoFrame` reportedly unsupported here — wrap in `ImageBitmap`.                           |
+| `device.importExternalTexture({ source })`         | `HTMLVideoElement`, `VideoFrame`                                                                                         | `GPUExternalTexture` (`texture_external` in WGSL) | zero-copy (YUV sampled in hardware). Expires: from a video element at the end of the task that used it; from a `VideoFrame` when the frame is closed → bind groups rebuilt every frame. Sample with `textureSampleBaseClampToEdge` / `textureLoad` only, no mips. Not Baseline: listed missing in Firefox 141; Safari status unclear. Not in Bun's PR, not in node-webgpu. |
 
 Video on the web today is therefore done one of two ways: **copy per frame**
-(`copyExternalImageToTexture` from the video element or a WebCodecs
-`VideoFrame` into an ordinary texture — portable, mips possible, sampled like
-any texture) or **external texture** (zero-copy, Chromium-best, a separate
-binding type with per-frame bind groups). New-frame pacing is
-`requestVideoFrameCallback` on `HTMLVideoElement`, or the decoder output
-callback for WebCodecs.
+(`copyExternalImageToTexture` from the video element or a WebCodecs `VideoFrame`
+into an ordinary texture — portable, mips possible, sampled like any texture) or
+**external texture** (zero-copy, Chromium-best, a separate binding type with
+per-frame bind groups). New-frame pacing is `requestVideoFrameCallback` on
+`HTMLVideoElement`, or the decoder output callback for WebCodecs.
 
 Decoding encoded bytes (PNG/JPEG) is never WebGPU's job: browser and Deno use
-`createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha:
-"none" })` — the two options matter for **data** textures (baked noise, LUTs),
-which must not be color-managed or premultiplied. Node/Bun decode to raw RGBA
-in JS (see §4.3).
+`createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" })`
+— the two options matter for **data** textures (baked noise, LUTs), which must
+not be color-managed or premultiplied. Node/Bun decode to raw RGBA in JS (see
+§4.3).
 
 ### 1.4 Encoding output
 
@@ -154,22 +153,23 @@ in JS (see §4.3).
 
 Verified against the current sources:
 
-| Where                                 | Assumption                                                       |
-| ------------------------------------- | ---------------------------------------------------------------- |
-| `painter/webgpu.scala` `getGPU`       | `dom.window.navigator.gpu` — `window` is undefined off-browser   |
-| `painter/webgpu.scala` `getContext`   | `canvas.getContext("webgpu")`                                    |
-| `Painter.init`                        | `gpu.getPreferredCanvasFormat()`, `clientWidth/Height`, `ResizeObserver` |
-| `Painter` fields                      | `canvas`, `context` as constructor vals; `width/height` read `canvas` |
-| `paintPanel`                          | `canvas.width/height` as the panel size fallback                 |
-| `show`, `draw`                        | `context.getCurrentTexture()`, no explicit present               |
-| `Painter.input`                       | DOM canvas (method, DCE'd when unused — fine)                    |
-| `utils/animate.scala` `Animator`      | global `requestAnimationFrame`                                   |
+| Where                               | Assumption                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------ |
+| `painter/webgpu.scala` `getGPU`     | `dom.window.navigator.gpu` — `window` is undefined off-browser           |
+| `painter/webgpu.scala` `getContext` | `canvas.getContext("webgpu")`                                            |
+| `Painter.init`                      | `gpu.getPreferredCanvasFormat()`, `clientWidth/Height`, `ResizeObserver` |
+| `Painter` fields                    | `canvas`, `context` as constructor vals; `width/height` read `canvas`    |
+| `paintPanel`                        | `canvas.width/height` as the panel size fallback                         |
+| `show`, `draw`                      | `context.getCurrentTexture()`, no explicit present                       |
+| `Painter.input`                     | DOM canvas (method, DCE'd when unused — fine)                            |
+| `utils/animate.scala` `Animator`    | global `requestAnimationFrame`                                           |
 
 No external code reads `p.canvas` / `p.context` (grep over sketches, `src/`,
 examples). The painter already defines its own `GPUTextureUsage` /
 `GPUBufferUsage` / `GPUShaderStage` constants, so it does not depend on the
-WebGPU globals that node-webgpu only installs via `Object.assign(globalThis,
-globals)` — **keep that invariant** (add `GPUMapMode` the same way).
+WebGPU globals that node-webgpu only installs via
+`Object.assign(globalThis, globals)` — **keep that invariant** (add `GPUMapMode`
+the same way).
 
 Out of scope, stay browser-only: `utils/events/*`, `dev/*`, `preact/*`.
 
@@ -205,23 +205,23 @@ trait Surface:
 `present` takes the frame's encoder so a capture surface can append its
 `copyTextureToBuffer` to the same submission as the blit.
 
-| Surface                    | `currentTexture`                     | `present`                                | `onResize`             | `requestFrame`                              | Phase |
-| -------------------------- | ------------------------------------ | ---------------------------------------- | ---------------------- | ------------------------------------------- | ----- |
-| `CanvasSurface(canvas)`    | `context.getCurrentTexture()`        | no-op                                    | `ResizeObserver`       | `requestAnimationFrame`                     | M1.0  |
-| `CaptureSurface(w, h, …)`  | owned texture, `RENDER_ATTACHMENT \| COPY_SRC` | copy → staging buffer → `mapAsync` → frame | never                  | fixed-step offline driver (§3.5)            | M1.1  |
+| Surface                   | `currentTexture`                               | `present`                                  | `onResize`       | `requestFrame`                   | Phase |
+| ------------------------- | ---------------------------------------------- | ------------------------------------------ | ---------------- | -------------------------------- | ----- |
+| `CanvasSurface(canvas)`   | `context.getCurrentTexture()`                  | no-op                                      | `ResizeObserver` | `requestAnimationFrame`          | M1.0  |
+| `CaptureSurface(w, h, …)` | owned texture, `RENDER_ATTACHMENT \| COPY_SRC` | copy → staging buffer → `mapAsync` → frame | never            | fixed-step offline driver (§3.5) | M1.1  |
 
-`CanvasSurface` is today's `Painter.init` body moved verbatim: browser
-behavior does not change. It is the only place that calls
+`CanvasSurface` is today's `Painter.init` body moved verbatim: browser behavior
+does not change. It is the only place that calls
 `gpu.getPreferredCanvasFormat()`, `ResizeObserver` and `requestAnimationFrame`.
 Typed as `HTMLCanvasElement | OffscreenCanvas`, duck-typed at runtime
 (`getContext("webgpu")`).
 
 **No auto-detection** (reasoning carried over from the host-seam design in
-[non-browser-hosts-plan.md](non-browser-hosts-plan.md)): a
-detecting `init(anything)` makes every surface reachable from every bundle and
-defeats Scala.js DCE. Surfaces are constructed explicitly by the entry point;
-a browser bundle links `CanvasSurface` only, an offline bundle links
-`CaptureSurface` only. `Painter` references the trait.
+[non-browser-hosts-plan.md](non-browser-hosts-plan.md)): a detecting
+`init(anything)` makes every surface reachable from every bundle and defeats
+Scala.js DCE. Surfaces are constructed explicitly by the entry point; a browser
+bundle links `CanvasSurface` only, an offline bundle links `CaptureSurface`
+only. `Painter` references the trait.
 
 ### 3.2 Painter init API
 
@@ -268,26 +268,27 @@ object Painter:
 ```
 
 `create` forwards to `WebGPU.requestDevice` unless `device` is given. The
-browser gains the options too: `Painter.create(CanvasSurface(canvas),
-powerPreference = PowerPreference.HighPerformance)`. `Painter` gains
-`adapterInfo: GPUAdapterInfo` (when it resolved the adapter itself),
-`surface: Surface`, and `destroy()` (`device.destroy()`). `width` / `height` /
-`onResize` delegate to the surface; `canvas` / `context` leave the constructor.
+browser gains the options too:
+`Painter.create(CanvasSurface(canvas), powerPreference = PowerPreference.HighPerformance)`.
+`Painter` gains `adapterInfo: GPUAdapterInfo` (when it resolved the adapter
+itself), `surface: Surface`, and `destroy()` (`device.destroy()`). `width` /
+`height` / `onResize` delegate to the surface; `canvas` / `context` leave the
+constructor.
 
 ### 3.3 Adapter control, offline
 
 Two layers, because selection splits across the `GPU` boundary (§1.2):
 
 **Runtime level — in the driver, before `GPU` exists.** The driver script maps
-two generic flags to the runtime's mechanism, so one command line means the
-same thing everywhere:
+two generic flags to the runtime's mechanism, so one command line means the same
+thing everywhere:
 
-| Flag                | node-webgpu                    | Deno                               | Bun (when native)  |
-| ------------------- | ------------------------------ | ---------------------------------- | ------------------ |
-| `--backend vulkan`  | `create(["backend=vulkan"])`   | `DENO_WEBGPU_BACKEND=vulkan`       | to verify          |
-| `--adapter <name>`  | `create(["adapter=<name>"])`   | via `requireAdapter` (below) + Vulkan env | same as Deno |
-| `--software`        | `forceFallbackAdapter = true`  | `forceFallbackAdapter = true`      | same               |
-| `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json` for all runtimes (set before spawn) | | |
+| Flag                 | node-webgpu                                                             | Deno                                      | Bun (when native) |
+| -------------------- | ----------------------------------------------------------------------- | ----------------------------------------- | ----------------- |
+| `--backend vulkan`   | `create(["backend=vulkan"])`                                            | `DENO_WEBGPU_BACKEND=vulkan`              | to verify         |
+| `--adapter <name>`   | `create(["adapter=<name>"])`                                            | via `requireAdapter` (below) + Vulkan env | same as Deno      |
+| `--software`         | `forceFallbackAdapter = true`                                           | `forceFallbackAdapter = true`             | same              |
+| `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json` for all runtimes (set before spawn) |                                           |                   |
 
 Env vars must be set before the runtime initializes its GPU instance, so the
 driver either documents them or re-spawns itself with them set.
@@ -296,8 +297,8 @@ driver either documents them or re-spawns itself with them set.
 `adapter.info` and rejects the promise with a message listing what was found
 (`vendor / architecture / device / description`). A convenience
 `WebGPU.adapterNamed("nvidia")` builds a case-insensitive substring predicate
-over those fields. `logAdapter = true` prints the info once — default on in
-the offline drivers, off in the browser.
+over those fields. `logAdapter = true` prints the info once — default on in the
+offline drivers, off in the browser.
 
 A `list-adapters` driver mode: on Node it calls `create(["adapter=?"])` and
 relays Dawn's `Available adapters` list (backend + exact name to pass to
@@ -342,16 +343,16 @@ class CaptureSurface(
 ```
 
 - `show(panel)` = blit to `currentTexture()` + `present` = **one captured
-  frame**. Several `show` calls accumulate several frames; nothing else
-  triggers a capture. `draw()`-only code calls `surface.capture()`.
-- Readback: per frame a staging buffer from a small pool, `bytesPerRow =
-  align(width * bpp, 256)`, `mapAsync(READ)`, unpad into a fresh `Pixels`,
-  `unmap`, return the buffer to the pool. `bgra8unorm` is swizzled to RGBA
-  while unpadding so files are always RGBA. Map completions settle in
+  frame**. Several `show` calls accumulate several frames; nothing else triggers
+  a capture. `draw()`-only code calls `surface.capture()`.
+- Readback: per frame a staging buffer from a small pool,
+  `bytesPerRow = align(width * bpp, 256)`, `mapAsync(READ)`, unpad into a fresh
+  `Pixels`, `unmap`, return the buffer to the pool. `bgra8unorm` is swizzled to
+  RGBA while unpadding so files are always RGBA. Map completions settle in
   submission order; sinks are chained so `onFrame` sees frames in order.
-- Memory: `keepFrames = false` + `onFrame` streams (video); `keepFrames =
-  true` is for stills and short sequences. A manual `show` loop without the
-  driver (§3.5) can outrun readback — `flush()` before exit; documented.
+- Memory: `keepFrames = false` + `onFrame` streams (video); `keepFrames = true`
+  is for stills and short sequences. A manual `show` loop without the driver
+  (§3.5) can outrun readback — `flush()` before exit; documented.
 - `format = Rgba8Unorm` by default, not `bgra8unorm`: no swizzle and matches
   PNG. The display path writes raw (non-sRGB) values exactly as the browser
   canvas does, so a capture looks like the browser frame.
@@ -365,9 +366,9 @@ def read(panel: Panel, index: Int = 0, mipLevel: Int = 0): js.Promise[Pixels]
 
 Exact format and size of the panel texture — the path for baked assets, where
 `show`'s blit (scaling, format conversion to the surface) is wrong. Needs
-`COPY_SRC` on panel color textures: add it unconditionally in `ensureSize`
-(no measurable cost). Works in the browser too (e.g. a dev "download bake"
-button). Depth is not readable (`depth24plus` is not copyable) — out of scope.
+`COPY_SRC` on panel color textures: add it unconditionally in `ensureSize` (no
+measurable cost). Works in the browser too (e.g. a dev "download bake" button).
+Depth is not readable (`depth24plus` is not copyable) — out of scope.
 
 ### 3.5 Frame loop: `p.animate`
 
@@ -375,8 +376,8 @@ button). Depth is not readable (`depth24plus` is not copyable) — out of scope.
 `requestAnimationFrame`. `p.animate(frame)` routes through
 `surface.requestFrame`; the free `animate` stays as the browser convenience.
 
-`CaptureSurface.requestFrame` is a **fixed-step offline driver**: `tpf =
-1000 / fps` exactly, next frame scheduled only after the previous frame's
+`CaptureSurface.requestFrame` is a **fixed-step offline driver**:
+`tpf = 1000 / fps` exactly, next frame scheduled only after the previous frame's
 readback and sink settled (backpressure, bounded memory), stops after
 `frameCount` frames and resolves `flush()`. Same sketch code, deterministic
 output:
@@ -389,9 +390,10 @@ p.animate: tpf =>
   p.show(scene)
 ```
 
-In the browser that's a live loop; with `CaptureSurface(fps = 60, frameCount
-= 600)` it is a 10 s video, frame-exact regardless of GPU speed. Sketches
-migrate from `animate:` to `p.animate:` only where they want to be renderable.
+In the browser that's a live loop; with
+`CaptureSurface(fps = 60, frameCount = 600)` it is a 10 s video, frame-exact
+regardless of GPU speed. Sketches migrate from `animate:` to `p.animate:` only
+where they want to be renderable.
 
 ### 3.6 Writing files — `trivalibs.offline`
 
@@ -423,9 +425,8 @@ object Ffmpeg:
              height: Maybe[Int] = Maybe.Not): FrameSource // decode → Pixels, §4.3
 ```
 
-`FrameSink.write` honours stdin backpressure (`write()` false → await
-`drain`). `CaptureSurface(onFrame = sink.write)` streams; `flush()` then
-`sink.close()`.
+`FrameSink.write` honours stdin backpressure (`write()` false → await `drain`).
+`CaptureSurface(onFrame = sink.write)` streams; `flush()` then `sink.close()`.
 
 ### 3.7 End-to-end shape
 
@@ -475,16 +476,17 @@ await render(navigator.gpu)
 // today: bun-webgpu / wgpu-polyfill provide the GPU object (API to verify).
 ```
 
-The consuming repo grows a `scripts/render.ts <path> [--runtime node|deno|bun]
-[--backend …] [--adapter …]` that builds the offline entry with scala-cli and
-spawns the chosen runtime — a consumer-side plan, not trivalibs.
+The consuming repo grows a
+`scripts/render.ts <path> [--runtime node|deno|bun] [--backend …] [--adapter …]`
+that builds the offline entry with scala-cli and spawns the chosen runtime — a
+consumer-side plan, not trivalibs.
 
-**Entry-point signature.** Browser sketches keep `sketch(canvas:
-HTMLCanvasElement)`; offline entries take `gpu: GPU` and construct their own
-`CaptureSurface`, since its size, fps and frame count belong to the render, not
-to the host. Whether browser sketches should later take a `Surface` instead (so
-one body runs on every host) is the native-window plan's decision; nothing here
-forces it.
+**Entry-point signature.** Browser sketches keep
+`sketch(canvas: HTMLCanvasElement)`; offline entries take `gpu: GPU` and
+construct their own `CaptureSurface`, since its size, fps and frame count belong
+to the render, not to the host. Whether browser sketches should later take a
+`Surface` instead (so one body runs on every host) is the native-window plan's
+decision; nothing here forces it.
 
 **`Painter.input`** needs a DOM canvas and stays browser-only. It must not be
 reached from code meant to run offline: a portable body takes inputs as
@@ -494,8 +496,8 @@ parameters (or none — an offline render has no user). Moving it onto
 ### 3.8 Kept compatible: native-window surfaces (separate issue)
 
 Not implemented here, but the `Surface` trait must admit them without change —
-if a later window surface needs edits to `Surface` or `Painter`, this design
-was wrong:
+if a later window surface needs edits to `Surface` or `Painter`, this design was
+wrong:
 
 - **Explicit present** (Deno `UnsafeWindowSurface.present()`) — covered by
   `present(encoder)`, called once per `show`.
@@ -509,8 +511,8 @@ was wrong:
   to `bgra8unorm`) — covered by `Surface.format`.
 - **Device before surface** (Deno: `getNativeWindow()` throws before
   `requestAdapter()`) — `Painter.create` resolves the device first, then calls
-  `surface.configure(device)`, so a surface may construct its context lazily
-  in `configure`.
+  `surface.configure(device)`, so a surface may construct its context lazily in
+  `configure`.
 
 ---
 
@@ -533,12 +535,12 @@ explicit because bytes carry neither. `ImageData` can go either way: direct
 (`copyExternalImageToTexture`) or `Pixels.fromImageData`.
 
 Runtime dispatch is **`isInstanceOf[Pixels]` (our class) → `writeTexture`,
-anything else → `copyExternalImageToTexture`**. Never `instanceof
-HTMLImageElement` — referencing a DOM global throws in Node. Size of external
-sources is duck-typed in this order: `videoWidth` (video) → `naturalWidth`
-(img) → `displayWidth` (VideoFrame) → `width` (bitmap, ImageData, canvas). The
-order matters: `<video>` and `<img>` also have a `width` that is the layout
-size, not the pixel size.
+anything else → `copyExternalImageToTexture`**. Never
+`instanceof HTMLImageElement` — referencing a DOM global throws in Node. Size of
+external sources is duck-typed in this order: `videoWidth` (video) →
+`naturalWidth` (img) → `displayWidth` (VideoFrame) → `width` (bitmap, ImageData,
+canvas). The order matters: `<video>` and `<img>` also have a `width` that is
+the layout size, not the pixel size.
 
 ### 4.2 Panel API
 
@@ -551,8 +553,8 @@ panel.set(source = nextFrame)                         // explicit re-upload
 ```
 
 New `Panel.set` / `Painter.panel` params: `source: Maybe[TextureSource]`,
-`live: Maybe[Boolean]`, `flipY: Maybe[Boolean]`, `premultipliedAlpha:
-Maybe[Boolean]`.
+`live: Maybe[Boolean]`, `flipY: Maybe[Boolean]`,
+`premultipliedAlpha: Maybe[Boolean]`.
 
 Semantics:
 
@@ -567,10 +569,10 @@ Semantics:
   reallocate through the existing `ensureSize` path (bumps `bindEpoch`, so
   cached layer bind groups rebuild).
 - `mips = true` → the existing `generateMipmaps` runs after each upload.
-- `live = true` → `paint(panel)` re-uploads from the held source. Video
-  elements are skipped while `readyState < 2` and when `currentTime` hasn't
-  changed since the last upload. `VideoFrame`s are caller-owned: the caller
-  `set`s each new frame and closes the old one.
+- `live = true` → `paint(panel)` re-uploads from the held source. Video elements
+  are skipped while `readyState < 2` and when `currentTime` hasn't changed since
+  the last upload. `VideoFrame`s are caller-owned: the caller `set`s each new
+  frame and closes the old one.
 - Shapes or layers on a source panel throw in `set` (the existing validation
   choke point). Post-processing goes in a second panel that samples it.
   Rationale: a pong layer on a static texture would compound on every paint;
@@ -601,23 +603,23 @@ bundle.
 
 ### 4.4 Video, consistently
 
-| Environment | Source                                           | Path                                 |
-| ----------- | ------------------------------------------------ | ------------------------------------ |
-| Browser     | `HTMLVideoElement`, `live = true`                | copy per frame                       |
-| Browser     | WebCodecs `VideoFrame`, `panel.set(source = f)`  | copy per frame (Firefox: via `ImageBitmap`) |
-| Offline     | `Ffmpeg.frames(path)` → `Pixels` per frame       | `writeTexture` per frame             |
+| Environment | Source                                          | Path                                        |
+| ----------- | ----------------------------------------------- | ------------------------------------------- |
+| Browser     | `HTMLVideoElement`, `live = true`               | copy per frame                              |
+| Browser     | WebCodecs `VideoFrame`, `panel.set(source = f)` | copy per frame (Firefox: via `ImageBitmap`) |
+| Offline     | `Ffmpeg.frames(path)` → `Pixels` per frame      | `writeTexture` per frame                    |
 
-So video is "a source that changes every frame" — the same panel API as a
-still. The output side mirrors it: `Ffmpeg.video` consumes the `Pixels` that
-`CaptureSurface` produces, so an offline pipeline can decode a video, process
-it through panels, and encode the result, with no browser types involved.
+So video is "a source that changes every frame" — the same panel API as a still.
+The output side mirrors it: `Ffmpeg.video` consumes the `Pixels` that
+`CaptureSurface` produces, so an offline pipeline can decode a video, process it
+through panels, and encode the result, with no browser types involved.
 
-**Zero-copy external textures are deliberately not the first step.** They need
-a new binding kind (`texture_external` + a DSL marker beside
-`FragmentPanel`), per-frame bind group rebuilds, no mips, and are missing on
-Firefox, node-webgpu and Bun's PR. Copy-per-frame costs one GPU copy per frame
-— negligible below 4K. Add `p.videoTexture(video)` as an opt-in binding later,
-only if a profile asks for it; the panel path stays.
+**Zero-copy external textures are deliberately not the first step.** They need a
+new binding kind (`texture_external` + a DSL marker beside `FragmentPanel`),
+per-frame bind group rebuilds, no mips, and are missing on Firefox, node-webgpu
+and Bun's PR. Copy-per-frame costs one GPU copy per frame — negligible below 4K.
+Add `p.videoTexture(video)` as an opt-in binding later, only if a profile asks
+for it; the panel path stays.
 
 ### 4.5 Offline bake → static asset → sketch
 
@@ -627,9 +629,9 @@ time matters:
 1. Offline entry runs the same `TextureBaker` code, `p.read(panel)` →
    `Png.write` (8-bit) or `Ktx2.write` (float formats, prebuilt mips) into the
    sketch's `assets/`.
-2. The sketch loads it: `WebImages.load("assets/wall.png").map(img =>
-   p.panel(source = img, mips = true))`; KTX2 via `fetch` + `Ktx2.decode` +
-   `Pixels` sources per mip.
+2. The sketch loads it:
+   `WebImages.load("assets/wall.png").map(img => p.panel(source = img, mips = true))`;
+   KTX2 via `fetch` + `Ktx2.decode` + `Pixels` sources per mip.
 3. A bake-or-load switch is consumer-side code (`sketchlib`), proposed
    separately — not extracted as part of this work.
 
@@ -641,17 +643,16 @@ time matters:
 
 - `GPUAdapter.info: GPUAdapterInfo` (`vendor`, `architecture`, `device`,
   `description`), `features`, `limits`
-- `GPUDevice.destroy()`, `lost: js.Promise[js.Dynamic]`,
-  `importExternalTexture` (later)
-- `GPUQueue.writeTexture`, `copyExternalImageToTexture`,
-  `onSubmittedWorkDone`
+- `GPUDevice.destroy()`, `lost: js.Promise[js.Dynamic]`, `importExternalTexture`
+  (later)
+- `GPUQueue.writeTexture`, `copyExternalImageToTexture`, `onSubmittedWorkDone`
 - `GPUCommandEncoder.copyTextureToBuffer`, `copyTextureToTexture`
 - `GPUBuffer.mapAsync`, `getMappedRange`, `unmap`, `size`
 - `GPUTexture.width/height/format`
 - `object GPUMapMode { val READ = 1; val WRITE = 2 }`
 - `PowerPreference` opaque type (`"high-performance"`, `"low-power"`)
-- `OffscreenCanvas`, `VideoFrame` facades if scalajs-dom 2.8 lacks them
-  (types only)
+- `OffscreenCanvas`, `VideoFrame` facades if scalajs-dom 2.8 lacks them (types
+  only)
 
 ---
 
@@ -659,17 +660,17 @@ time matters:
 
 Each step lands independently and leaves `examples/` and the sketches working.
 
-| Step     | Content                                                                                                                                       | Proof                                                                         |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **M1.0** | `Surface` + `CanvasSurface`, `getGPU` via `globalThis`, `WebGPU.requestDevice`, `Painter.create`, `p.animate`, scheduler-taking `Animator`, `destroy`, facade additions | no behavior change; all examples render                                       |
-| **M1.1** | `Pixels`, `CaptureSurface` (still frames), `p.read(panel)`, `COPY_SRC` on panels, `Png.encode/decode/write`, adapter verification + logging | `examples/headless-triangle/` with Node and Deno drivers writing a PNG        |
-| **M1.2** | fixed-step offline driver, `FrameSink`, `Png.writeSequence`, `Ffmpeg.video` / `gif`                                                            | headless example writes an mp4 and a gif                                      |
-| **M1.3** | munit GPU integration tests: `scala-cli test` already runs on Node, so with `webgpu` installed a test can render + read back (lavapipe in CI) | pixel assertions on a known render                                            |
-| **M2.0** | `TextureSource`, `source` / `live` / `flipY` / `premultipliedAlpha` on panels, `Pixels` + external-image upload, mips after upload           | example: raw-buffer panel, image panel; close the `independent-todos` entry  |
-| **M2.1** | `WebImages.load`, `Images.load` (offline), video element `live` panel                                                                          | example: video panel in browser; offline loads a PNG it wrote                 |
-| **M2.2** | `Ffmpeg.frames` → offline video input                                                                                                          | offline: video in → processed → video out                                     |
-| **M2.3** | `Ktx2` encode/decode, float + mip assets                                                                                                       | float bake round-trips bit-exact                                              |
-| later    | external-texture binding                                                                                                                       | —                                                                             |
+| Step     | Content                                                                                                                                                                 | Proof                                                                       |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **M1.0** | `Surface` + `CanvasSurface`, `getGPU` via `globalThis`, `WebGPU.requestDevice`, `Painter.create`, `p.animate`, scheduler-taking `Animator`, `destroy`, facade additions | no behavior change; all examples render                                     |
+| **M1.1** | `Pixels`, `CaptureSurface` (still frames), `p.read(panel)`, `COPY_SRC` on panels, `Png.encode/decode/write`, adapter verification + logging                             | `examples/headless-triangle/` with Node and Deno drivers writing a PNG      |
+| **M1.2** | fixed-step offline driver, `FrameSink`, `Png.writeSequence`, `Ffmpeg.video` / `gif`                                                                                     | headless example writes an mp4 and a gif                                    |
+| **M1.3** | munit GPU integration tests: `scala-cli test` already runs on Node, so with `webgpu` installed a test can render + read back (lavapipe in CI)                           | pixel assertions on a known render                                          |
+| **M2.0** | `TextureSource`, `source` / `live` / `flipY` / `premultipliedAlpha` on panels, `Pixels` + external-image upload, mips after upload                                      | example: raw-buffer panel, image panel; close the `independent-todos` entry |
+| **M2.1** | `WebImages.load`, `Images.load` (offline), video element `live` panel                                                                                                   | example: video panel in browser; offline loads a PNG it wrote               |
+| **M2.2** | `Ffmpeg.frames` → offline video input                                                                                                                                   | offline: video in → processed → video out                                   |
+| **M2.3** | `Ktx2` encode/decode, float + mip assets                                                                                                                                | float bake round-trips bit-exact                                            |
+| later    | external-texture binding                                                                                                                                                | —                                                                           |
 
 Native-window surfaces are not a phase of this plan — see
 [non-browser-hosts-plan.md](non-browser-hosts-plan.md).
@@ -712,7 +713,8 @@ scripts and are run, not deployed.
 
 - node-webgpu: [repo](https://github.com/dawn-gpu/node-webgpu),
   [example.js](https://github.com/dawn-gpu/node-webgpu/blob/main/example/example.js)
-- Deno: [`createImageBitmap`](https://docs.deno.com/api/web/~/createImageBitmap),
+- Deno:
+  [`createImageBitmap`](https://docs.deno.com/api/web/~/createImageBitmap),
   [`@std/webgpu` createCapture](https://jsr.io/@std/webgpu/doc/create-capture/~/createCapture),
   `DENO_WEBGPU_BACKEND` in
   [ext/webgpu/lib.rs](https://github.com/denoland/deno/blob/main/ext/webgpu/lib.rs)
@@ -721,7 +723,8 @@ scripts and are run, not deployed.
   [`Bun.Image.raw()` PR #43623](https://github.com/oven-sh/bun/pull/43623),
   [bun-webgpu](https://github.com/kommander/bun-webgpu),
   [wgpu-polyfill](https://github.com/wiedymi/wgpu-polyfill)
-- Video/images: [MDN `importExternalTexture`](https://developer.mozilla.org/en-US/docs/Web/API/GPUDevice/importExternalTexture),
+- Video/images:
+  [MDN `importExternalTexture`](https://developer.mozilla.org/en-US/docs/Web/API/GPUDevice/importExternalTexture),
   [MDN `copyExternalImageToTexture`](https://developer.mozilla.org/docs/Web/API/GPUQueue/copyExternalImageToTexture),
   [Chrome WebGPU 116 (WebCodecs)](https://developer.chrome.com/blog/new-in-webgpu-116),
   [Image loading on the web](https://www.ludicon.com/castano/blog/2026/05/image-loading-on-the-web/),

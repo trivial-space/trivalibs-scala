@@ -17,9 +17,8 @@ Two on-screen hosts are wanted:
 1. **Deno windows** — Deno ≥ 2.9 `deno desktop` gives a native window, and
    `Deno.UnsafeWindowSurface` gives WebGPU on it. Desktop, no mobile toolchain:
    the cheap place to prove an on-screen non-browser host.
-2. **NativeScript** — `@nativescript/canvas` exposes WebGPU on Android/iOS
-   (the `2.0.0-webgpu.*` prerelease line). This is the actual deployment
-   interest.
+2. **NativeScript** — `@nativescript/canvas` exposes WebGPU on Android/iOS (the
+   `2.0.0-webgpu.*` prerelease line). This is the actual deployment interest.
 
 If NativeScript turns out to differ too much from the browser / Deno shape, it
 stays deferred; the Deno window surface does not depend on it.
@@ -28,15 +27,15 @@ stays deferred; the Deno window surface does not depend on it.
 
 ## Surfaces
 
-| Surface                   | `currentTexture`                          | `present`           | `onResize`                                 | `requestFrame`                    |
-| ------------------------- | ----------------------------------------- | ------------------- | ------------------------------------------ | --------------------------------- |
-| `DenoWindowSurface(win)`  | `surface.getContext("webgpu")` context    | `surface.present()` | window `resize` → `surface.resize(w, h)`   | `setTimeout` loop                 |
-| NativeScript              | `CanvasSurface` or a subclass             | to verify           | canvas layout event, to verify             | rAF polyfill, to verify           |
+| Surface                  | `currentTexture`                       | `present`           | `onResize`                               | `requestFrame`          |
+| ------------------------ | -------------------------------------- | ------------------- | ---------------------------------------- | ----------------------- |
+| `DenoWindowSurface(win)` | `surface.getContext("webgpu")` context | `surface.present()` | window `resize` → `surface.resize(w, h)` | `setTimeout` loop       |
+| NativeScript             | `CanvasSurface` or a subclass          | to verify           | canvas layout event, to verify           | rAF polyfill, to verify |
 
 ### Deno (verified against the current docs)
 
-- WebGPU needs `"unstable": ["webgpu"]` in `deno.json`; the desktop window
-  needs `"desktop": { "backend": "raw" }` (not selectable via `--backend`).
+- WebGPU needs `"unstable": ["webgpu"]` in `deno.json`; the desktop window needs
+  `"desktop": { "backend": "raw" }` (not selectable via `--backend`).
 - `win.getNativeWindow()` returns the `Deno.UnsafeWindowSurface`, and **throws
   unless `navigator.gpu.requestAdapter()` has run first**. So the surface must
   build its context in `configure(device)`, not in its constructor —
@@ -52,8 +51,8 @@ stays deferred; the Deno window surface does not depend on it.
 - Once a surface has been taken, `close()` hides the window instead of
   destroying it; call `Deno.exit()` to end the process.
 
-The older route (SDL2 via `jsr:@divy/sdl2`, `win.windowSurface()`) is
-superseded by `deno desktop`.
+The older route (SDL2 via `jsr:@divy/sdl2`, `win.windowSurface()`) is superseded
+by `deno desktop`.
 
 ### NativeScript (unverified)
 
@@ -67,48 +66,47 @@ superseded by `deno desktop`.
 - the prerelease line drifts — pin an exact version.
 
 If the answers are "browser-like", NativeScript is just `CanvasSurface`. A
-subclass with an explicit present is still fine. Anything that needs
-`Surface` or `Painter` changes is the signal to rethink the trait.
+subclass with an explicit present is still fine. Anything that needs `Surface`
+or `Painter` changes is the signal to rethink the trait.
 
 ---
 
 ### Watched, not planned: Perry / Bloom Engine
 
 [Bloom](https://bloomengine.dev/) (MIT, `@bloomengine/engine` 0.4.x, very
-active) is a raylib-shaped game engine: game code in TypeScript, compiled
-ahead of time by [Perry](https://github.com/PerryTS/perry) (SWC + LLVM →
-native binary; also `--target web/wasm`), rendering in a Rust **wgpu** core.
+active) is a raylib-shaped game engine: game code in TypeScript, compiled ahead
+of time by [Perry](https://github.com/PerryTS/perry) (SWC + LLVM → native
+binary; also `--target web/wasm`), rendering in a Rust **wgpu** core.
 
 - **No WebGPU interface for JS.** TypeScript never touches the GPU. It calls
   ~465 flat `bloom_*` functions declared via Perry's
   `perry.nativeLibrary.functions` (C ABI on native, `wasm_bindgen` on web):
   `bloom_begin_drawing`, `bloom_clear_background(r,g,b,a)`, `drawRect`, … The
-  only shader hook is `loadShader(wgslSource): number` — no pipelines,
-  buffers, bind groups or render targets. The painter cannot run on Bloom, and
-  wrapping its API would mean reimplementing the painter on raylib-level calls.
-  Not a target.
+  only shader hook is `loadShader(wgslSource): number` — no pipelines, buffers,
+  bind groups or render targets. The painter cannot run on Bloom, and wrapping
+  its API would mean reimplementing the painter on raylib-level calls. Not a
+  target.
 - **Perry itself is the interesting part**: a TS/JS → native compiler that
   compiles plain `.js`, implements most `node:*` modules, and — per its
-  changelog — complete `bun:ffi` / `node:ffi` C-ABI support (pointers,
-  zero-copy memory views, callbacks). A Perry host would be: Scala.js bundle →
-  Perry binary → a WebGPU JS API over FFI. Perry ships no WebGPU API; the
-  candidate is `bun-webgpu` (Dawn via `bun:ffi`), which may run unchanged on
-  Perry's `bun:ffi`. Native `.node` addons (so node-webgpu) are **not**
-  supported.
+  changelog — complete `bun:ffi` / `node:ffi` C-ABI support (pointers, zero-copy
+  memory views, callbacks). A Perry host would be: Scala.js bundle → Perry
+  binary → a WebGPU JS API over FFI. Perry ships no WebGPU API; the candidate is
+  `bun-webgpu` (Dawn via `bun:ffi`), which may run unchanged on Perry's
+  `bun:ffi`. Native `.node` addons (so node-webgpu) are **not** supported.
 - **Two unknowns, both cheap to test by experiment, neither verified:**
   1. Scala.js output vs Perry's limits — classes compile to fixed layouts;
      assigning to `.prototype` and `Object.setPrototypeOf` are unsupported;
-     `Proxy` / `Reflect` are partial. Our `jsMode full` output does exactly
-     the unsupported thing: `sketches/base-triangle/main.js` contains
+     `Proxy` / `Reflect` are partial. Our `jsMode full` output does exactly the
+     unsupported thing: `sketches/base-triangle/main.js` contains
      `….prototype = $p` and `….prototype = new $h_O()` (Scala.js class
-     encoding). Likely a blocker unless Perry tolerates it; try `perry
-     compile` on that bundle to find out.
-  2. Whether `bun-webgpu`'s struct marshalling runs on Perry's `bun:ffi`.
-     It also has no window surface, so on-screen output would need a separate
+     encoding). Likely a blocker unless Perry tolerates it; try `perry compile`
+     on that bundle to find out.
+  2. Whether `bun-webgpu`'s struct marshalling runs on Perry's `bun:ffi`. It
+     also has no window surface, so on-screen output would need a separate
      surface binding.
-- **What it would buy:** one self-contained native binary, iOS/Android from
-  the same toolchain — overlapping the NativeScript goal. Nothing over
-  Node/Deno/Bun for offline rendering.
+- **What it would buy:** one self-contained native binary, iOS/Android from the
+  same toolchain — overlapping the NativeScript goal. Nothing over Node/Deno/Bun
+  for offline rendering.
 - **Painter impact:** none. A Perry host is just another `GPU` provider plus a
   `Surface`, which is exactly the seam the headless plan introduces. Revisit if
   Perry ships WebGPU itself, or if the two experiments above pass.
@@ -122,17 +120,17 @@ native binary; also `--target web/wasm`), rendering in a Rust **wgpu** core.
   `Painter.init(canvas)` stays, so existing sketches and `examples/` keep
   compiling untouched. The `@JSExportTopLevel("sketch")` refactor already did
   most of the migration.
-- **Input.** `Painter.input` needs a DOM canvas. On-screen hosts do have
-  users, so this is where an input abstraction becomes worth doing
-  (NativeScript touch, Deno window events). Until then, `input` should live on
-  or require `CanvasSurface`, so a portable sketch can't silently depend on it.
+- **Input.** `Painter.input` needs a DOM canvas. On-screen hosts do have users,
+  so this is where an input abstraction becomes worth doing (NativeScript touch,
+  Deno window events). Until then, `input` should live on or require
+  `CanvasSurface`, so a portable sketch can't silently depend on it.
 - **Out of scope, stay browser-only:** `utils/events/*`, `dev/*` (uses
   `sessionStorage` and `window`), `preact/*`.
 
 ## Phasing
 
-1. `DenoWindowSurface` + a windowed example. Proves explicit present, resize
-   and the `setTimeout` loop against the `Surface` trait.
+1. `DenoWindowSurface` + a windowed example. Proves explicit present, resize and
+   the `setTimeout` loop against the `Surface` trait.
 2. NativeScript, as an app under the consuming repo plus at most a
    `CanvasSurface` subclass.
 

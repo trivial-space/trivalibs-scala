@@ -6,8 +6,7 @@
 
 > Now planned as Milestone 2 of
 > [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md)
-> (`Pixels` / `TextureSource` panel sources). Remove this entry when M2.0
-> lands.
+> (`Pixels` / `TextureSource` panel sources). Remove this entry when M2.0 lands.
 
 **Gap:** Rust's `Panel::with_static_texture_data(bytes)` is the canonical way to
 load an image / baked texture into a panel's render target. The Scala Panel has
@@ -147,11 +146,11 @@ one. Counts and indices therefore travel as `Double`/f32 and get `.toI32`'d in
 the shader, which is what every consumer does today.
 
 If a sketch ever needs a genuine integer uniform, **add all forms at once** —
-scalar and vector, signed and unsigned — rather than the one shape that
-happened to be needed; a half-covered set is worse than none. `UniformArray` of
-them then follows from one `UniformArrayElem` instance each, under the lane rule
-in [done/uniform-scalar-arrays-plan.md](done/uniform-scalar-arrays-plan.md)
-(4 lanes for the scalars, 2 for `IVec2`/`UVec2`, 1 for the rest).
+scalar and vector, signed and unsigned — rather than the one shape that happened
+to be needed; a half-covered set is worse than none. `UniformArray` of them then
+follows from one `UniformArrayElem` instance each, under the lane rule in
+[done/uniform-scalar-arrays-plan.md](done/uniform-scalar-arrays-plan.md) (4
+lanes for the scalars, 2 for `IVec2`/`UVec2`, 1 for the rest).
 
 **Priority:** Low — no consumer, and the f32 route works.
 
@@ -161,11 +160,10 @@ in [done/uniform-scalar-arrays-plan.md](done/uniform-scalar-arrays-plan.md)
 
 ### 🔄 Local arrays — indexable `var` inside a shader body
 
-Lifted out of
-[uniform-arrays-plan.md](done/uniform-arrays-plan.md) as its milestone 3 when
-milestones 1 (`UniformArray[T, N]`) and 2 (loop primitives) shipped. **Deferred,
-and not committed to** — the API shape below is decided, the decision to build it
-is not.
+Lifted out of [uniform-arrays-plan.md](done/uniform-arrays-plan.md) as its
+milestone 3 when milestones 1 (`UniformArray[T, N]`) and 2 (loop primitives)
+shipped. **Deferred, and not committed to** — the API shape below is decided,
+the decision to build it is not.
 
 **Gap:** there is no way to declare an indexable `var` inside a shader body.
 `UniformArray` is a binding — CPU-written, read-only in the shader — and a local
@@ -194,10 +192,11 @@ Block(
 **Required changes:**
 
 - **Reads reuse `ArrayExpr[E]`** — the indexing surface milestone 1 shipped,
-  constant and `IntExpr` forms both. That type is already address-space-agnostic,
-  which was the one thing milestone 2 had to preserve; it did.
-- **Writes are new.** `a(i)` returns the element expression `E`, which carries no
-  `:=`. Either a method (`a.set(i, value): Stmt`) or an assignable accessor
+  constant and `IntExpr` forms both. That type is already
+  address-space-agnostic, which was the one thing milestone 2 had to preserve;
+  it did.
+- **Writes are new.** `a(i)` returns the element expression `E`, which carries
+  no `:=`. Either a method (`a.set(i, value): Stmt`) or an assignable accessor
   (`a.at(i) := value`, returning an `AssignTarget`). The second matches how
   `ctx.out.color := …` already reads; the first is one fewer concept.
 - **`Var` only, not `Let`/`Const`.** Whether WGSL permits a runtime index into a
@@ -213,9 +212,9 @@ other local needs. Every local today declares itself on first `:=`
 `var lines: array<vec4<f32>, 3>;` has to be emitted on its own — one extra
 statement in the `Block` and nothing else, and the only local that needs one,
 worth a line in the docs. Plus one thing to document rather than discover:
-**dynamically indexing a function-local array is a known performance cliff** — it
-can push the array out of registers into scratch memory on some GPUs. Constant
-indices are free; a loop-variable index is not always.
+**dynamically indexing a function-local array is a known performance cliff** —
+it can push the array out of registers into scratch memory on some GPUs.
+Constant indices are free; a loop-variable index is not always.
 
 **Priority:** Low — nothing depends on it, and a capability waits for a real
 consumer here. The two `sketches/textures/` bodies are not it (they should stay
@@ -227,10 +226,10 @@ unrolled). Revisit when a shader genuinely needs indexed mutable scratch.
 
 ### 🔄 `Arr.++=` delegating to native `push`
 
-`Arr` has an inline `+=` that compiles to `push` (`src/utils/js.scala`), but
-no `++=`. So `arr ++= x` silently falls back to Scala.js's `Growable.++=`,
-which goes through collection machinery, and on an `Arr[String]` appends a
-string argument **character by character**. Add inline overloads on `Arr`: one
+`Arr` has an inline `+=` that compiles to `push` (`src/utils/js.scala`), but no
+`++=`. So `arr ++= x` silently falls back to Scala.js's `Growable.++=`, which
+goes through collection machinery, and on an `Arr[String]` appends a string
+argument **character by character**. Add inline overloads on `Arr`: one
 appending another `Arr` (native `push(...other)` / a push loop), and one for a
 single element as a `+=` alias, so the natural builder spelling
 (`sb ++= "line"`) is safe and allocation-free. Noticed while writing the WGSL
@@ -244,10 +243,10 @@ generators in `shader/lib/noise/worley.scala`, which use `push` for now.
 
 ### ✅ CPU noise and CPU / GPU mirrored lib helpers
 
-Done in [`done/cpu-gpu-lib-plan.md`](done/cpu-gpu-lib-plan.md): simplex (2D–4D, fbm,
-torus), extended (psrdnoise, 2D / 3D, tiling / rotation / gradient, fbm) and
-worley (2D / 3D) on CPU and GPU, one hashed optional `seed`, normalized fbms,
-`graphics/lib` (CPU + shared `transparent inline` extensions) mirroring
+Done in [`done/cpu-gpu-lib-plan.md`](done/cpu-gpu-lib-plan.md): simplex (2D–4D,
+fbm, torus), extended (psrdnoise, 2D / 3D, tiling / rotation / gradient, fbm)
+and worley (2D / 3D) on CPU and GPU, one hashed optional `seed`, normalized
+fbms, `graphics/lib` (CPU + shared `transparent inline` extensions) mirroring
 `graphics/shader/lib`, and the C1–C14 lib conventions.
 
 ---

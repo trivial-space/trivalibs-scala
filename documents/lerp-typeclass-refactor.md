@@ -1,8 +1,46 @@
 # Lerp as the one interpolation type class
 
+## Status (2026-10-17)
+
+**Implemented, not archived.** Steps 1 and 2 landed in trivalibs `7278824`. Step
+3 is still open, and deciding it is what keeps this plan in `documents/` and out
+of `documents/done/`. See [What comes next](#what-comes-next).
+
+| step                                                    | state                               |
+| ------------------------------------------------------- | ----------------------------------- |
+| 1. delete `NumExt.lerpIn`                               | done                                |
+| 2. `LerpBy` + concrete instances + `lerpIn`             | done, with deviations (below)       |
+| 3. move `numbers` / `interpolation` to `trivalibs.math` | open, not decided                   |
+| follow-up: linear-algebra indirection audit             | not started, separate investigation |
+
+Covered by `test/math/LerpIn.test.scala`. User-facing usage is in
+`docs/guide/shader-dsl-guide.md`.
+
+### Deviations from the original plan
+
+- **No derived scalar instance.** Step 2 originally derived `LerpBy[P, P]` from
+  `NumExt`. That parameterized given put an anonymous class at every call site,
+  so it was replaced by concrete `doubleLerp` (`LerpBy` companion) and
+  `floatExprLerp` (`FloatExpr` companion). See
+  [Zero-cost givens](#zero-cost-givens).
+- **No generic vector instances.** The plan had a
+  `[V] => Vec*Base[V] => Vec*ImmutableOps[V]` instance for the tuple and buffer
+  representations. It is gone. The tuples got concrete instances in `LerpBy`'s
+  companion, and the buffer representations (`StructRef[Vec*Buffer]`) have no
+  `Lerp`, as before the refactor.
+- **Instance `lerp` methods are `inline def`.** Without that, the scalar path
+  stays a module call and does not fold into arithmetic.
+- **An extra `FloatExpr.lerpIn` overload takes `LetExpr[T]` bounds.** Shader
+  locals (`LetFloat`, `Var*`, `Const*`) are subtypes of their expression type,
+  and `LerpBy` is invariant, so the generic form inferred `T` as the local's
+  type and found no instance.
+- **A new step-3 blocker.** The tuple instances refer to `Vec*ImmutableOps`, so
+  `interpolation.scala` now imports `graphics.math.cpu`. See
+  [Step 3's open question](#step-3s-open-question-implicit-scope).
+
 ## Motivation
 
-Interpolation is currently spread over three unrelated definitions:
+Before this refactor, interpolation was spread over three unrelated definitions:
 
 | where                               | what                                 | parameter type          |
 | ----------------------------------- | ------------------------------------ | ----------------------- |
@@ -22,15 +60,15 @@ each other — one silently hides the other. Measured precedence (Scala 3.8.4):
 4. once a source is picked there is **no fallback** — arguments that don't fit
    are a type error, not a retry against the hidden definition.
 
-`NumExt.lerpIn` is therefore already dead code for `Double` and `FloatExpr`
-receivers: the definitions in `interpolation.scala` and `gpu/float_expr.scala`
-hide it. Documenting that is worse than removing it.
+That made `NumExt.lerpIn` dead code for `Double` and `FloatExpr` receivers: the
+definitions in `interpolation.scala` and `gpu/float_expr.scala` hid it.
+Documenting that would have been worse than removing it, so it was removed.
 
-A second, sharper hazard sits on the GPU side. `Double` converts to
-`FloatExpr`, so any `FloatExpr` overload that accepts **CPU** `Vec*` bounds is
-also applicable to a CPU call: `0.5.lerpIn(Vec3(0), Vec3(1))` resolves into the
-GPU overload set and returns a `Vec3Expr` where the author wrote CPU math.
-Silent, not an error. Hence each receiver keeps its bounds in its own domain.
+A second, sharper hazard sits on the GPU side. `Double` converts to `FloatExpr`,
+so any `FloatExpr` overload that accepts **CPU** `Vec*` bounds is also
+applicable to a CPU call: `0.5.lerpIn(Vec3(0), Vec3(1))` resolves into the GPU
+overload set and returns a `Vec3Expr` where the author wrote CPU math. Silent,
+not an error. Hence each receiver keeps its bounds in its own domain.
 
 ## Design
 
@@ -53,13 +91,15 @@ type Lerp[T] = LerpBy[T, Double]   // every existing `[T: Lerp]` site is unchang
 
 Instances:
 
-| instance                                    | covers                                                                          |
-| ------------------------------------------- | ------------------------------------------------------------------------------- |
+| instance                                    | covers                                                                                  |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `doubleLerp`, `floatExprLerp`               | the two scalars that exist in practice — concrete, not derived (see "Zero-cost givens") |
-| `lerpInstance` in `Vec2`/`Vec3`/`Vec4`      | the CPU vector classes — concrete modules, no allocation                        |
-| `[V] => Vec2Base[V] => Vec2ImmutableOps[V]` | the remaining representations (tuple, buffer) — same for `Vec3`/`Vec4`         |
-| `LerpBy[Unit, Double]`                      | `Line[Unit]`                                                                    |
-| in the `Vec*Expr` companions                | GPU vectors with a `FloatExpr` parameter                                        |
+| `lerpInstance` in `Vec2`/`Vec3`/`Vec4`      | the CPU vector classes — concrete modules, no allocation                                |
+| `vec2TupleLerp` / `vec3…` / `vec4…`         | the tuple representations — concrete, in `LerpBy`'s companion                           |
+| `unitLerp`                                  | `Line[Unit]`                                                                            |
+| `lerpInstance` in the `Vec*Expr` companions | GPU vectors with a `FloatExpr` parameter                                                |
+
+The buffer representations get no instance (see "Zero-cost givens").
 
 The GPU instances live in the **`Vec*Expr` companions**, not in `LerpBy`'s, so
 `graphics.math` never has to import `graphics.math.gpu`. Implicit search finds
@@ -84,8 +124,8 @@ the companions of `LerpBy`, `Vec3Expr` and `FloatExpr`.
 
 This is the load-bearing constraint. If the prelude exported `LerpBy.given`,
 those givens would become imported identifiers and, by rule 3 above, **shadow
-the vector ops' `.lerp`** — collapsing a rich overload set to one signature.
-So the givens stay in companions, reachable by implicit search only:
+the vector ops' `.lerp`** — collapsing a rich overload set to one signature. So
+the givens stay in companions, reachable by implicit search only:
 
 - `[T: Lerp]` context bounds resolve (implicit scope);
 - `summon`/`using` inside `lerpIn` resolves (implicit scope);
@@ -102,9 +142,15 @@ extension (t: Double)
 
 extension (t: FloatExpr)                       // gpu/float_expr.scala
   inline def lerpIn[T](lo: T, hi: T)(using inline l: LerpBy[T, FloatExpr]): T
+  inline def lerpIn[T <: Expr](lo: LetExpr[T], hi: LetExpr[T])(using
+      inline l: LerpBy[T, FloatExpr]): T
   def lerpIn(lo: Double, hi: Double): FloatExpr
   def lerpIn(lo: Int, hi: Int): FloatExpr
 ```
+
+The `LetExpr` overload covers bounds held in shader locals
+(`t.lerpIn(stopPrev, stopNext)`). `LerpBy` is invariant, so the generic form
+would infer `T = LetFloat` and find no instance.
 
 ### Why not one `lerpIn` on `LerpBy` itself?
 
@@ -121,11 +167,11 @@ trait LerpBy[T, P]:
   imported into identifier scope — the one thing that must not happen, since it
   hides the ops traits' `lerp`.
 - **Ambiguous even then.** The receiver fixes `P` and leaves `T` free, so every
-  instance with the same parameter type offers the same extension: *"both object
-  doubleLerp and object unitLerp provide an extension method `lerpIn` on
-  (0.5d : Double)"*.
+  instance with the same parameter type offers the same extension: _"both object
+  doubleLerp and object unitLerp provide an extension method `lerpIn` on (0.5d :
+  Double)"_.
 
-Taking the receiver as the *parameter* and inferring `T` from the arguments is
+Taking the receiver as the _parameter_ and inferring `T` from the arguments is
 what makes a call site resolvable at all. Hence one `lerpIn` per receiver
 domain.
 
@@ -135,12 +181,12 @@ generic form dispatches to their concrete `LerpBy` instances instead.
 The two literal overloads are not equals, measured by deleting each and
 rebuilding clean:
 
-| variant                          | result                                   |
-| -------------------------------- | ---------------------------------------- |
-| generic + `Double` + `Int`       | compiles                                 |
-| generic + `Int` (no `Double`)    | **fails** on `t.lerpIn(0.81, 1.0)`       |
-| generic + `Double` (no `Int`)    | compiles — `Int` widens to `Double`      |
-| generic only                     | fails on both literal forms              |
+| variant                       | result                              |
+| ----------------------------- | ----------------------------------- |
+| generic + `Double` + `Int`    | compiles                            |
+| generic + `Int` (no `Double`) | **fails** on `t.lerpIn(0.81, 1.0)`  |
+| generic + `Double` (no `Int`) | compiles — `Int` widens to `Double` |
+| generic only                  | fails on both literal forms         |
 
 So `Double` is load-bearing (Scala will not apply
 `Conversion[Double, FloatExpr]` through an overloaded method set) and `Int` is
@@ -156,9 +202,9 @@ exactly the failures a bare call site would hit.
 
 ## Zero-cost givens
 
-Routing an operation through a type class is only acceptable here if it
-compiles to what the hand-written call compiles to. Measured, six shapes of the
-same function, `jsMode full`:
+Routing an operation through a type class is only acceptable here if it compiles
+to what the hand-written call compiles to. Measured, six shapes of the same
+function, `jsMode full`:
 
 | shape                                                        | emitted JS                                                 |
 | ------------------------------------------------------------ | ---------------------------------------------------------- |
@@ -170,19 +216,19 @@ same function, `jsMode full`:
 
 Conclusions that govern the implementation:
 
-- What allocates is a **parameterized given written as an anonymous class
-  body** — it compiles to a class taking its dependencies as constructor
-  arguments, `new`-ed at each summon site. That is today's `vec2Lerp` shape,
-  and the only type-class allocation surviving in any example bundle.
+- What allocates is a **parameterized given written as an anonymous class body**
+  — it compiles to a class taking its dependencies as constructor arguments,
+  `new`-ed at each summon site. That was the pre-refactor `vec2Lerp` shape, and
+  the only type-class allocation in any example bundle at the time.
 - `inline given` on the body form changes nothing.
 - `inline given` as an **alias**, combined with an `inline def` use site taking
-  `using inline`, erases completely. Cost: the compiler warns that the
-  anonymous class is duplicated at each inline site — fine for a one-line
-  `lerp`, not for a large body.
-- A **non-parameterized** given needs no `inline` at all; the Scala.js
-  optimizer already devirtualizes it to a direct singleton call, and it can
-  never produce a per-call-site class. This is the reliable shape.
-- Making the type class *method* `inline` does not substitute for the alias.
+  `using inline`, erases completely. Cost: the compiler warns that the anonymous
+  class is duplicated at each inline site — fine for a one-line `lerp`, not for
+  a large body.
+- A **non-parameterized** given needs no `inline` at all; the Scala.js optimizer
+  already devirtualizes it to a direct singleton call, and it can never produce
+  a per-call-site class. This is the reliable shape.
+- Making the type class _method_ `inline` does not substitute for the alias.
   Four combinations, measured on a parameterized scalar instance via
   `0.5.lerpIn(a, b)`:
 
@@ -211,7 +257,7 @@ measurements to pin down:
 - a generic consumer too big to inline (the shape a real algorithm has —
   `Grid.subdivide`, `splitByPlane`, the `Line` transforms) over `Vec3`: **does
   not fold** either. One anonymous class per call site, allocated per call, and
-  two call sites for the *same* type produced two separate classes:
+  two call sites for the _same_ type produced two separate classes:
 
   ```js
   $p.v = (x, n) => …(new Vec3(x,x,x), new Vec3(x,x,x), n, new $anon$1()).g;
@@ -224,15 +270,15 @@ every instance in the library is one:
 Resolution, read off a running build (`summon[…].getClass.getName`) — **every
 instance is a module, so nothing allocates at any call site**:
 
-| type                       | instance that wins                    | lives in                    |
-| -------------------------- | ------------------------------------- | --------------------------- |
-| `Double`                   | `LerpBy$doubleLerp$`                  | `LerpBy` companion          |
-| `Unit`                     | `LerpBy$unitLerp$`                    | `LerpBy` companion          |
-| `Vec2` / `Vec3` / `Vec4`   | `cpu.Vec*$lerpInstance$`              | each vector's companion     |
-| `Vec2Tuple` / `3` / `4`    | `LerpBy$vec*TupleLerp$`               | `LerpBy` companion          |
-| `FloatExpr`                | `gpu.Expr$FloatExpr$floatExprLerp$`   | the opaque type's companion |
-| `Vec2Expr` / `3` / `4`     | `gpu.Expr$Vec*Expr$lerpInstance$`     | the opaque type's companion |
-| `StructRef[Vec*Buffer]`    | **none** — no `Lerp` exists           | —                           |
+| type                     | instance that wins                  | lives in                    |
+| ------------------------ | ----------------------------------- | --------------------------- |
+| `Double`                 | `LerpBy$doubleLerp$`                | `LerpBy` companion          |
+| `Unit`                   | `LerpBy$unitLerp$`                  | `LerpBy` companion          |
+| `Vec2` / `Vec3` / `Vec4` | `cpu.Vec*$lerpInstance$`            | each vector's companion     |
+| `Vec2Tuple` / `3` / `4`  | `LerpBy$vec*TupleLerp$`             | `LerpBy` companion          |
+| `FloatExpr`              | `gpu.Expr$FloatExpr$floatExprLerp$` | the opaque type's companion |
+| `Vec2Expr` / `3` / `4`   | `gpu.Expr$Vec*Expr$lerpInstance$`   | the opaque type's companion |
+| `StructRef[Vec*Buffer]`  | **none** — no `Lerp` exists         | —                           |
 
 Two placement rules are doing the work:
 
@@ -240,9 +286,9 @@ Two placement rules are doing the work:
   implicit search reaches — the `Vec*` classes, and the opaque `*Expr` types;
 - it goes in **`LerpBy`'s companion** where the type does not. `Vec3Tuple` is an
   alias for `(Double, Double, Double)`, so the implicit scope of
-  `Lerp[Vec3Tuple]` is the companions of `Tuple3` and `Double` — never `object
-  Vec3Tuple`. `LerpBy`'s own companion is always in scope, so that is the home
-  for those.
+  `Lerp[Vec3Tuple]` is the companions of `Tuple3` and `Double` — never
+  `object Vec3Tuple`. `LerpBy`'s own companion is always in scope, so that is
+  the home for those.
 
 The buffer representations are `Vec*Mutable`, not `Vec*ImmutableOps`, so they
 have no `lerp` to delegate to and get no instance. That was true before this
@@ -266,39 +312,41 @@ extension in scope and hide the ops traits' richer overload sets. The export
 excludes them by name (`export Vec3.{lerpInstance as _, given}`); implicit
 search still finds them in the companion.
 
-That warning the alias shape produced (`New anonymous class definition will be
-duplicated at each inline site`) is literal, and it is about *compile-time call
-sites* — one class per place the given is summoned at an inline site, when it
-does not fold. With every instance concrete the warning is gone, and so is the
-`@nowarn` that used to suppress it.
+That warning the alias shape produced
+(`New anonymous class definition will be duplicated at each inline site`) is
+literal, and it is about _compile-time call sites_ — one class per place the
+given is summoned at an inline site, when it does not fold. With every instance
+concrete the warning is gone, and so is the `@nowarn` that used to suppress it.
 
-## Was the old design faster? (A/B against `HEAD`)
+## Was the old design faster? (A/B against the pre-refactor tree)
+
+"Old" is the parent of `7278824`; "new" is the refactor.
 
 The question is fair: the previous design had an unparameterized `Lerp[T]` and
 `inline` `lerp`/`lerpIn` on `NumExt`, which sounds cheaper than a type class.
 Measured by compiling the same probe against both trees, `jsMode full`:
 
-| path                              | old                                          | new                              |
-| --------------------------------- | -------------------------------------------- | -------------------------------- |
-| `t.lerpIn(a, b)`, scalar          | `a * (1.0 - t) + b * t`                      | same                             |
-| generic `[T: Lerp]`, scalar       | module call                                  | same                             |
-| generic `[T: Lerp]`, `Vec3`       | **`new Lerp$vec3Lerp(…)` per call** + 2 field loads | direct `mixScalar` — no allocation |
-| `Lerp` classes in the bundle      | 2 (`doubleLerp$` module + `vec3Lerp` class)  | 1 (`doubleLerp$` module)         |
+| path                         | old                                                 | new                                |
+| ---------------------------- | --------------------------------------------------- | ---------------------------------- |
+| `t.lerpIn(a, b)`, scalar     | `a * (1.0 - t) + b * t`                             | same                               |
+| generic `[T: Lerp]`, scalar  | module call                                         | same                               |
+| generic `[T: Lerp]`, `Vec3`  | **`new Lerp$vec3Lerp(…)` per call** + 2 field loads | direct `mixScalar` — no allocation |
+| `Lerp` classes in the bundle | 2 (`doubleLerp$` module + `vec3Lerp` class)         | 1 (`doubleLerp$` module)           |
 
 The generic vector path is the one that matters — it is what `Grid.subdivide`,
 `Quad.subdivide*`, `splitByPlane` and the `Line` transforms run per element:
 
 ```js
 // old
-var evidence$1 = new Lerp$vec3Lerp(Vec3Mutable$(), Vec3$().l());
-return mixScalar(evidence$1.j, a, evidence$1.i, b, 0.5).d;
+var evidence$1 = new Lerp$vec3Lerp(Vec3Mutable$(), Vec3$().l())
+return mixScalar(evidence$1.j, a, evidence$1.i, b, 0.5).d
 // new
-return mixScalar(Vec3$().j(), a, Vec3Mutable$(), b, 0.5).d;
+return mixScalar(Vec3$().j(), a, Vec3Mutable$(), b, 0.5).d
 ```
 
 So the new design is equal on every scalar path and strictly better on the
 generic vector path. `Lerp[T]` being unparameterized was never the cost — its
-*givens* were parameterized anonymous-class bodies, so every summon site
+_givens_ were parameterized anonymous-class bodies, so every summon site
 allocated. `NumExt`'s inline methods were genuinely free, and the new code
 matches them rather than beating them.
 
@@ -310,24 +358,27 @@ call. Concrete given **plus** `inline def lerp` is what restores the arithmetic.
 ## Steps
 
 1. **Delete `NumExt.lerpIn`.** Already shadowed for every receiver that matters.
-2. **Introduce `LerpBy[T, P]` + `type Lerp[T]`,** derive `LerpBy[P, P]` from
-   `NumExt`, add the GPU instances in the `Vec*Expr` companions, collapse the
-   enumerated GPU `lerpIn` block to one generic definition + literal overloads,
-   and give every representation a concrete, non-parameterized instance.
+2. **Introduce `LerpBy[T, P]` + `type Lerp[T]`,** add the GPU instances in the
+   `Vec*Expr` companions, collapse the enumerated GPU `lerpIn` block to one
+   generic definition + literal overloads, and give every representation that
+   has `lerp` ops a concrete, non-parameterized instance. (The draft derived
+   `LerpBy[P, P]` from `NumExt`. That was dropped, see
+   [Deviations](#deviations-from-the-original-plan).)
 3. **Move `numbers` and `interpolation` to a top-level `trivalibs.math`**
    package, next to `utils`/`graphics`. Vector math stays in `graphics` — those
    types are tailored to the painter API.
 
-Steps 1 and 2 are done. Step 3 is open, and carries one unresolved cost:
+Steps 1 and 2 are done (see [Status](#status-2026-10-17)). Step 3 is open, and
+carries one unresolved cost:
 
 ### Step 3's open question: implicit scope
 
 The concrete-instance work changed the shape of this problem. `LerpBy`'s
 companion no longer holds anything that mentions `Vec*Base` — the vector and
-expression instances live in their own companions. What it *does* hold is the
+expression instances live in their own companions. What it _does_ hold is the
 three tuple instances, and those have to be there (a tuple alias has no
-companion in its implicit scope) while referring to `Vec*ImmutableOps` to do
-the work. So `interpolation.scala` now imports `graphics.math.cpu`.
+companion in its implicit scope) while referring to `Vec*ImmutableOps` to do the
+work. So `interpolation.scala` now imports `graphics.math.cpu`.
 
 That is the one thing blocking a clean move to `trivalibs.math`: the tuple
 instances would drag a `graphics.math.cpu` dependency into the new package.
@@ -345,11 +396,12 @@ Separate investigation, after this refactor. The goal is that the CPU math in
 render loops carries as little indirection as possible, and the method above is
 the tool: compile, read the emitted call, diff against hand-written arithmetic.
 
-Early signal — scanning every example bundle for surviving allocations, the
-only type-class instance allocated anywhere is `Lerp$vec2Lerp`; the ops traits
-are summoned through object-form givens, which the optimizer already reduces to
-direct singleton calls. Two limits on that signal, both of which the audit
-should address:
+Early signal, from before the refactor: scanning every example bundle for
+surviving allocations, the only type-class instance allocated anywhere was
+`Lerp$vec2Lerp`, and this refactor removed it. The ops traits are summoned
+through object-form givens, which the optimizer already reduces to direct
+singleton calls. Two limits on that signal, both of which the audit should
+address:
 
 - **Wrong corpus.** `examples/out/` is library examples, not render-loop CPU
   math, and may be stale against `src`. The sketches repo holds the real hot
@@ -360,3 +412,20 @@ should address:
   whether it then inlines the body is unmeasured. For `v.x.mix(b.x, t)`, three
   calls per vector op inside a subdivision loop, that is the number that
   matters.
+
+## What comes next
+
+The type class itself is finished and in use. What keeps the plan active is one
+undecided step. The audit is separate work.
+
+1. **Decide step 3.** Choose one of the three options in
+   [Step 3's open question](#step-3s-open-question-implicit-scope), or drop the
+   move entirely. Either way, record the outcome here. This is the only thing
+   blocking archival.
+2. **Archive.** Once step 3 is implemented or explicitly rejected, move this
+   file to `documents/done/`.
+3. **Split out the audit.** The
+   [linear-algebra indirection audit](#follow-up-linear-algebra-indirection-audit)
+   does not depend on step 3 and does not block archival. When archiving, move
+   it to its own plan or to `documents/independent-todos.md` so it is not buried
+   in a done document.
