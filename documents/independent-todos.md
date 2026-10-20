@@ -55,6 +55,35 @@ Add a public `destroy(): Unit` to the painter classes that own GPU resources:
   `p.paint`).
 - **`Panel`** (`panel.scala`) — destroy color / pong / msaa / depth textures;
   reuse the existing texture-teardown logic (`panel.scala:133-134, 450-458`).
+- **`Painter`** — `destroy()` → `device.destroy()`, plus a pending-work drain
+  (`queue.onSubmittedWorkDone()`) before it. Deferred out of
+  [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md):
+  render-and-exit scripts end with `process.exit(0)` and let the OS reclaim
+  everything. Needed once a **long-running** process renders repeatedly — e.g. a
+  server rendering images on demand, where each request's painter (or its
+  panels) must be freed, and where node-webgpu's keep-alive must be released
+  without exiting. A whole-painter `destroy()` sidesteps the ownership question
+  below (everything goes), so it can land before per-resource freeing.
+
+  **Browser: destroy + re-init on the same canvas** (in-place hot reload that
+  re-runs `sketch(canvas)` without a page reload; recovery from device loss).
+  WebGPU allows it, but `device.destroy()` alone leaves page-level hooks behind,
+  so `Painter.destroy()` must also tear down what the painter attached:
+  - stop the `p.animate` loop(s) — the free `animate` is not painter-owned and
+    must be stopped by the caller; one more reason for `p.animate`;
+  - `surface.dispose()`: `CanvasSurface` disconnects its `ResizeObserver` and
+    calls `context.unconfigure()`;
+  - remove `CanvasInput` DOM listeners if `p.input` created one;
+  - then `device.destroy()`.
+
+  Re-init needs nothing new: `canvas.getContext("webgpu")` returns the same
+  context and accepts a fresh `configure` with the new device, and
+  `Painter.init` already requests a **fresh adapter** each time (an adapter can
+  create only one device). Recovery = `device.lost` → `destroy()` →
+  `Painter.init(canvas)(setup)` again; add `p.onDeviceLost(cb)` exposing the
+  lost reason (`"destroyed"` vs a real loss). Today's dev loop doesn't need any
+  of this: a rebuilt `main.js` triggers a full page reload, and `trivalibs.dev`
+  preserves state across it via `sessionStorage`.
 
 Each class carries a `private var destroyed = false` flag:
 

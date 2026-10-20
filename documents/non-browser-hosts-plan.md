@@ -4,11 +4,28 @@
 
 **Depends on**
 [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md),
-which brings in the host seam (`Surface`, `CanvasSurface`, `Painter.create`,
-`globalThis.navigator.gpu`, `p.animate` scheduled by the surface) and the
-headless `CaptureSurface`. This document covers only what is left: **rendering
-on screen outside a browser**. The trait has to admit these hosts without
-changes; §3.8 of that plan lists the constraints this document puts on it.
+which brings in the host seam (`Surface`, `CanvasSurface`,
+`Painter.create(surface, gpu | device)` with the GPU supplied by user code) and
+the headless `CaptureSurface`. This document covers only what is left:
+**rendering on screen outside a browser**. The trait has to admit these hosts
+with one additive change — frame scheduling, below; §3.8 of that plan lists the
+constraints this document puts on it.
+
+## Frame scheduling
+
+Offline renders don't need a scheduler — the script owns the loop with a fixed
+`tpf`. On-screen hosts do: the host owns the frame rate, and Deno's raw backend
+has no `requestAnimationFrame`. So this plan adds:
+
+- `Surface.requestFrame(cb: Double => Unit)` — `CanvasSurface`:
+  `requestAnimationFrame`; `DenoWindowSurface`: `setTimeout` loop; NativeScript:
+  its rAF, to verify.
+- `Animator` takes the scheduler instead of calling the global
+  `requestAnimationFrame`.
+- `p.animate(frame)` routed through `surface.requestFrame`. The free `animate`
+  stays as the browser convenience; sketches move to `p.animate` only where they
+  want to run on a window host. `p.animate` is also what lets
+  `Painter.destroy()` stop the loop (see `independent-todos.md`, GPU resources).
 
 ## Motivation
 
@@ -128,6 +145,8 @@ binary; also `--target web/wasm`), rendering in a Rust **wgpu** core.
   `sessionStorage` and `window`), `preact/*`.
 
 ## Phasing
+
+0. Frame scheduling (above) — browser-only first, no behavior change.
 
 1. `DenoWindowSurface` + a windowed example. Proves explicit present, resize and
    the `setTimeout` loop against the `Surface` trait.
