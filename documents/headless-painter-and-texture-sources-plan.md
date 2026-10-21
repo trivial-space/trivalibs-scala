@@ -1,7 +1,8 @@
 # Headless painter, render-to-file, and texture sources
 
-**Status: planned, not implemented.** Scope is **offline render to file**, not
-on-screen rendering outside the browser. Takes over the host seam and the
+**Status: planned, not implemented. §1–3 (Milestone 1) reviewed and approved; §4
+onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**,
+not on-screen rendering outside the browser. Takes over the host seam and the
 headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
 `RenderHost` becomes `Surface` here); native-window hosts (Deno windows,
 NativeScript) stay a separate issue in that document, and §3.11 lists what this
@@ -918,8 +919,8 @@ def renderFrom(i: Int): js.Promise[Unit] =
     yield ()
 ```
 
-Deferred only because nothing needs it yet. The first long render that does
-adds `sink` and makes `awaitReadback` wait on it.
+Deferred only because nothing needs it yet. The first long render that does adds
+`sink` and makes `awaitReadback` wait on it.
 
 ### 3.11 Kept compatible: native-window surfaces (separate issue)
 
@@ -1184,16 +1185,17 @@ scripts and are run, not deployed.
 
 ## 8. Open decisions
 
-- **Naming.** `Surface` / `CaptureSurface` / `PixelFrames` / `PixelImage` /
-  `PixelFormat` / `Painter.create` are proposals. So are `showTo` (vs `showOn`)
-  and `atSize` (vs `withSize`).
+- **Naming** — decided with the §3 review: `Surface`, `CaptureSurface`,
+  `PixelFrames`, `PixelImage`, `PixelFormat`, `Painter.create`, `showTo`,
+  `atSize`, `awaitReadback`.
 - **Encoding** — decided: host side; no codec layer in trivalibs for now (§3.8).
   A Scala-side layer remains possible later.
 - **Streaming** — decided: later enhancement, as an optional `sink` on the
   container (§3.10).
-- **Sketch entry for offline renders.** Separate offline entry file per sketch
-  (proposed, keeps the deployed bundle clean) vs. a second export in the
-  sketch's `main.js`.
+- **Sketch entry for offline renders** — deferred, user land in the consuming
+  repo. Not decided here, and it may change with real usage. The starting
+  intent is strict separation: an offline render is its own sketch folder,
+  with its own code modules, a script with no `index.html`.
 
 ## Sources
 
