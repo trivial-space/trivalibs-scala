@@ -8,7 +8,7 @@ which brings in the host seam (`Surface`, `CanvasSurface`,
 `Painter.create(surface, gpu | device)` with the GPU supplied by user code) and
 the headless `CaptureSurface`. This document covers only what is left:
 **rendering on screen outside a browser**. The trait has to admit these hosts
-with one additive change — frame scheduling, below; §3.8 of that plan lists the
+with one additive change — frame scheduling, below; §3.11 of that plan lists the
 constraints this document puts on it.
 
 ## Frame scheduling
