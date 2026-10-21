@@ -984,37 +984,158 @@ p.panel(source = bitmap)                              // size from source
 p.panel(source = PixelImage(256, 256, noiseHalfs)) // Float16Array → rgba16float
 p.panel(source = img, format = TextureFormat.Rgba8UnormSrgb, mips = true)
 p.panel(source = video, live = true)                  // re-upload on every paint
+p.panel(source = photo, followTarget = true, shapes = scene) // canvas-sized, photo stretched behind
+p.panel(source = img, layers = Arr(blurX, blurY))     // effect stack over the image
 panel.set(source = nextFrame)                         // explicit re-upload
 ```
 
-New `Panel.set` / `Painter.panel` params: `source: Maybe[TextureSource]`,
-`live: Maybe[Boolean]`, `flipY: Maybe[Boolean]`,
-`premultipliedAlpha: Maybe[Boolean]`.
+New `Panel.set` / `Painter.panel` params: `source: Maybe[Opt[TextureSource]]`
+(`null` unsets), `sourceBlend: Maybe[Opt[BlendState]]`,
+`followTarget: Maybe[Boolean]`, `live: Maybe[Boolean]`,
+`flipY: Maybe[Boolean]`, `premultipliedAlpha: Maybe[Boolean]`.
 
-Semantics:
+#### The contributor stack
 
-- A source panel's size comes from the source (sets `specWidth/specHeight`), so
-  it never tracks the surface. Format: `PixelImage.format`, else the panel's
-  `format`, else **`Rgba8Unorm`** (not `preferredFormat`, which is `bgra8unorm`
-  on many browsers and would make the asset path format-dependent).
-- Texture usage adds `COPY_DST | RENDER_ATTACHMENT` (the latter is required by
-  `copyExternalImageToTexture` and by mip generation).
-- **Upload is eager on `set(source = …)`** — static panels are typically only
-  sampled, never painted. Same size and format → reuse the texture; otherwise
-  reallocate through the existing `ensureSize` path (bumps `bindEpoch`, so
-  cached layer bind groups rebuild).
-- `mips = true` → the existing `generateMipmaps` runs after each upload.
-- `live = true` → `paint(panel)` re-uploads from the held source. Video elements
-  are skipped while `readyState < 2` and when `currentTime` hasn't changed since
-  the last upload. `VideoFrame`s are caller-owned: the caller `set`s each new
-  frame and closes the old one.
-- Shapes or layers on a source panel throw in `set` (the existing validation
-  choke point). Post-processing goes in a second panel that samples it.
-  Rationale: a pong layer on a static texture would compound on every paint;
-  that semantic is not worth defining until a sketch needs it.
-- Everything downstream is unchanged: a source panel is sampled exactly like a
-  rendered one (`"tex" := panel`, `panel.binding(mipLevel = …)`), because it
-  reuses `_textures` / `views` slot 0.
+A source is one more contributor to the panel's image. **It is not a panel
+kind.** Every contributor can coexist with every other, and each paint builds
+the image in this fixed order:
+
+```
+clear color  →  source  →  shapes  →  layers
+(if set)        (if set)   (shape pass)  (as today)
+```
+
+- **Clear color.** Unchanged. Set → `loadOp: clear`. `null` → `loadOp: load`:
+  the previous content stays, and new draws stack on top of it.
+- **Source.** Drawn as the **first draw of the shape pass**: a fullscreen
+  triangle that samples the source texture.
+  - Without `sourceBlend` it replaces the whole target, so the clear color is
+    overdrawn. With `sourceBlend` it blends over the clear color, or over the
+    previous content when there is no clear color.
+  - Its pipeline uses `depthCompare: "always"` and `depthWriteEnabled: false`.
+    Depth stays at its clear value of 1.0, so shapes always land on top of the
+    background, even with `depthTest`.
+  - It goes through the same pipeline cache as shapes. The key covers the
+    formats, depth, MSAA and blend, so MSAA panels need nothing extra: the
+    background is drawn into the multisample attachment and resolved with the
+    shapes.
+  - **MRT.** The source is the background of target 0 only. The other targets
+    get `writeMask: 0`, so they keep their clear color or previous content.
+    The MRT shapes then write every target on top. The source never overrides
+    what the MRT shaders output.
+  - Because it is a draw, it can be scaled. Panel size and source size are
+    independent, and a linear sampler scales the source. At equal size it
+    samples texel centers, which is exact. An `rgba32float` source needs
+    `float32-filterable`, as in §3.4.
+- **Shapes.** Unchanged, drawn on top of the background.
+- **Layers.** Unchanged. They read slot 0 as before, so they process the
+  background together with the shapes. Pong layers don't compound across paints,
+  because the source is redrawn at the start of every paint.
+
+The old one-or-the-other rule (from the TS painter, and the previous draft of
+this plan: shapes or layers on a source panel throw) is dropped.
+
+#### Size
+
+A source gives the panel an **intrinsic size**, the way an `<img>` has one. The
+panel's size is resolved in this order:
+
+1. Explicit `width` / `height`. The source is scaled into them.
+2. `followTarget = true`. The panel tracks the target (the surface, or an
+   `atSize` override), and the source is stretched over it. Use it for a
+   background under a canvas-sized scene.
+3. Neither: **the source's size**.
+4. No source either: the panel tracks the target, as today.
+
+The default is the source's size, rather than "unsized panels track the target",
+for three reasons:
+
+- The main cases (an asset, a video, an offline input) want the image at its
+  own pixels. With tracking as the default, every one of them would have to
+  repeat the source's size. For an external image that size is not even one
+  field: it is `videoWidth`, `naturalWidth`, `displayWidth` or `width`, by type
+  (§4.1).
+- The two failure modes differ. A wrongly tracked asset fails silently: it is
+  resampled, its aspect distorted, and it is redrawn on every resize. A wrongly
+  intrinsic background fails visibly: it doesn't fill the canvas. Both are fixed
+  with one argument.
+- The policy holds. Tracking is what a panel does when it has no size of its
+  own. A source gives it one, and tracking a different size is an explicit
+  opt-in, just as explicit sizes are an opt-out today.
+
+The size is resolved in `ensureSize`, not stored in `specWidth` /
+`specHeight`. Unsetting the source therefore falls back to rule 4.
+
+#### Paths
+
+The path is decided from the configuration, never from a size that only matches
+by coincidence. A `followTarget` panel always takes the drawn path.
+
+- **Direct path.** It applies when the panel's size equals the source's size
+  (by rule 3, or an explicit equal size), and there are **no shapes and no
+  `sourceBlend`**. A `PixelImage` must also match the panel's format, because
+  `writeTexture` doesn't convert. External images convert in
+  `copyExternalImageToTexture`. A clear color doesn't disqualify the path,
+  because a replacing source overdraws it anyway.
+  - **Without layers**, the upload goes **straight into slot 0**: eagerly on
+    `set(source = …)`, and on every paint when `live`. Paint does nothing else,
+    apart from mips. This is the static-asset case: an image that is only ever
+    sampled.
+  - **With layers** (blur, color grading, any effect stack), the source keeps
+    its **own texture**, and each paint starts with one `copyTextureToTexture`
+    into slot 0. Then the layers run as usual. The copy restores the untouched
+    source on every paint, so pong layers process the image fresh and never
+    compound. It needs `COPY_SRC` on the source texture and `COPY_DST` on slot
+    0.
+- **Drawn path.** Every other case: shapes, `sourceBlend`, a size that differs,
+  or `followTarget`. The source keeps its own texture at its own size and
+  format, and each paint draws it as described above.
+
+**Switching paths** keeps the pixels. When the source needs its own texture and
+has none, the current slot-0 texture becomes the source texture, and a fresh
+slot 0 is allocated. When it no longer needs one, the source texture becomes
+slot 0. No re-upload is needed, which matters for a `VideoFrame` the caller has
+already closed.
+
+#### Format and usage
+
+- **Format.** In order: an explicit `format`, the `PixelImage`'s format,
+  **`Rgba8Unorm`**. Not `preferredFormat`: that is `bgra8unorm` on many browsers
+  and would make the asset path format-dependent.
+- **Usage.** Slot 0 and the source texture add `COPY_DST | RENDER_ATTACHMENT`.
+  The latter is required by `copyExternalImageToTexture` and by mip generation.
+  The source texture also adds `COPY_SRC`, for the copy on the layered direct
+  path.
+
+#### Unsetting, and the uncleared background
+
+`set(source = null)` removes the contributor and frees the source texture. If
+the size stays the same, slot 0 keeps its pixels. That holds for an explicit
+size or `followTarget`, and not for a size that came from the source, which
+falls back to tracking the target. To keep that size, pin it in the same call:
+`set(source = null, width = w, height = h)`. A panel without a clear color then
+loads the
+kept pixels, and its shapes go on stacking on top. Set the source, paint once,
+unset it, and the panel has a frozen background that later paints build on.
+
+This works because a texture is only **reallocated when the size changes**:
+`ensureSize` compares width and height and nothing else, so changing the clear
+color, the shapes or the layers through `set` keeps the pixels. (Side finding,
+for `independent-todos.md`: the same check means that changing the `format`,
+`depthTest` or `multisample` after the first paint, or adding the first pong
+layer, never reallocates. The last of these reads a missing slot 1.)
+
+#### Rest
+
+- `mips = true` → the existing `generateMipmaps` runs after each paint. On the
+  direct path it runs after each upload instead.
+- `live = true` → every paint re-uploads from the held source. Video elements
+  are skipped while `readyState < 2`, and when `currentTime` hasn't changed
+  since the last upload. `VideoFrame`s are owned by the caller: it `set`s each
+  new frame and closes the old one.
+- Everything downstream is unchanged. A source panel is sampled exactly like a
+  rendered one (`"tex" := panel`, `panel.binding(mipLevel = …)`), because the
+  result lives in slot 0 on both paths.
 
 ### 4.3 Loading
 
@@ -1110,7 +1231,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 | **M1.2**  | motion-sequence example: fixed-`tpf` loop + `awaitReadback()`, host script encodes mp4 / gif via ffmpeg                                                                                                             | headless example writes an mp4 and a gif                                                                                                                           |
 | **M1.2b** | `p.showTo(panel, into)`, `p.atSize(w, h)(body)` (§3.9)                                                                                                                                                              | browser example: a "4K screenshot" button downloads a PNG while the canvas keeps rendering; offline example writes a second, smaller preview image                 |
 | **M1.3**  | munit GPU integration tests: `scala-cli test` already runs on Node, so with `webgpu` installed a test can render + read back (lavapipe in CI)                                                                       | pixel assertions on a known render                                                                                                                                 |
-| **M2.0**  | `TextureSource`, `source` / `live` / `flipY` / `premultipliedAlpha` on panels, `PixelImage` + external-image upload, mips after upload                                                                              | example: raw-buffer panel, image panel; close the `independent-todos` entry                                                                                        |
+| **M2.0**  | `TextureSource`, `source` / `sourceBlend` / `live` / `flipY` / `premultipliedAlpha` on panels, `PixelImage` + external-image upload, contributor stack (source as the first shape-pass draw) + direct path (§4.2), mips | example: raw-buffer panel, image panel, image background under shapes + a layer; close the `independent-todos` entry                                               |
 | **M2.1**  | `WebImages.load`, video element `live` panel                                                                                                                                                                        | example: video panel in browser; offline driver feeds back a PNG it wrote as `PixelImage`                                                                          |
 | **M2.2**  | offline video input: host-decoded `PixelFrames` in, processed, `PixelFrames` out                                                                                                                                    | offline: video in → processed → video out                                                                                                                          |
 | **M1.4**  | `docs/guide/painter-setup-guide.md` (§6.1), written against the shipped API                                                                                                                                         | every snippet in it compiles / runs; the examples it cites exist                                                                                                   |
@@ -1196,6 +1317,12 @@ scripts and are run, not deployed.
   repo. Not decided here, and it may change with real usage. The starting
   intent is strict separation: an offline render is its own sketch folder,
   with its own code modules, a script with no `index.html`.
+- **Source on an MRT panel** — decided: background of target 0 only (§4.2).
+- **Default size of a source panel (§4.2).** Proposed: the source's intrinsic
+  size, with `followTarget = true` as the opt-in to tracking. The alternative
+  keeps "an unsized panel tracks the target" without exception, so an asset
+  panel must repeat the source's size to get the exact, direct path. The name
+  `followTarget` is also open.
 
 ## Sources
 
