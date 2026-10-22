@@ -31,6 +31,50 @@ the param row to the Panel table in §3.
 **Priority:** Medium — unblocks any example that needs a baked image texture
 (image-based sketches, reference LUTs, etc.).
 
+### 🔄 MRT: a generative layer as an alternative to shapes
+
+**Goal:** an MRT panel (several `formats`) can be filled by **one generative
+layer** instead of shapes. A layer has a fragment shader with no geometry and no
+vertex shader of its own, which is the natural fit for an SDF render or a
+raymarcher that writes color, normal and position to separate targets. It must
+work alongside the current shape rendering on MRT panels, and must not replace
+it.
+
+**Rule:** an MRT panel has **either shapes or exactly one generative layer**.
+The layer writes every target in a single pass that does not ping-pong. Nothing
+else is supported: no layer stacks, no blending of several layers, no shapes
+combined with layers, no layer reading the panel's previous output (ping-pong is
+forbidden already), and no static source (forbidden by the texture-sources plan,
+§4.2). Inputs come in as explicitly bound panels.
+
+**Current bug (code reading, unverified at runtime):** a non-ping-pong layer on
+an MRT panel fails today. The shared layer pass in `paintPanel`
+(`painter.scala`) attaches only slot 0, but `renderLayerOnPass` builds the
+pipeline with all of `panel.effectiveFormats`. WebGPU requires a pipeline's
+targets to match the pass's color attachments, so `setPipeline` fails
+validation. The mip-target layer pass has the same mismatch.
+
+**Required changes:**
+
+- In `Panel.set` (the validation choke point): on an MRT panel, throw for shapes
+  plus layers, for more than one layer, and for a layer with `mipTarget`.
+- In `paintPanel`: when an MRT panel has its one layer, render it in a pass that
+  attaches **all** targets, with the same clear or load and MSAA handling as the
+  shape pass. Either reuse the shape-pass attachment setup or factor it out.
+- Layer shades on MRT must declare one fragment output per target. Check that
+  the shader DSL can express multiple outputs in a `layerShade`, as it already
+  does for shapes.
+- An example: an SDF scene rendered by a single MRT layer into a G-buffer, then
+  lit by a single-format panel, the counterpart of `examples/deferred` without
+  geometry.
+
+**Doc follow-up:** `docs/guide/gotchas.md` (MRT paragraph, "A layer that
+manually binds its first slot is _not_ auto-pong and is fine on an MRT panel")
+is untested and, by the bug above, wrong. Rewrite it to the rule above.
+
+**Priority:** Medium. Until then, the working MRT pattern is shapes writing the
+G-buffer, read by a separate single-format panel.
+
 ---
 
 ## GPU resources
