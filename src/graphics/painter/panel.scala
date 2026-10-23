@@ -24,11 +24,16 @@ type ClearColor = Vec4
   *   - `sampling` — a full-chain view for shader sampling
   *     (`textureSampleLevel`).
   * Built once alongside the texture; travels with it through swaps.
+  *
+  * `blitGroup` is the `show` blit's bind group for this texture, built on
+  * first use. It travels with the bundle too, so pong swaps keep one group per
+  * texture and a reallocation (new bundles) starts empty — no keys or epochs.
   */
 private[painter] final class TextureViewBundle(
     val perMip: Arr[GPUTextureView],
     val sampling: GPUTextureView,
 ):
+  var blitGroup: Opt[GPUBindGroup] = null
   inline def attach: GPUTextureView = perMip(0)
 
 /** A reference to one texture view of a [[Panel]], used as a shader input. Pick

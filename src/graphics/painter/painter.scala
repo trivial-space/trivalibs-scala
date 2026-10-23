@@ -70,15 +70,16 @@ fn fs_main(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
 
 /** Central registry and frame driver for WebGPU rendering.
   *
-  * A `Painter` owns the GPU device and the canvas, and is the factory for every
-  * rendering resource: [[shade]]/[[layerShade]] (shaders), [[form]] (geometry),
-  * [[shape]] (drawable), [[layer]] (full-screen post-processing pass),
-  * [[panel]] (render target), [[binding]] (uniform buffers) and samplers. Per
-  * frame you call [[paint]] to render panels off-screen and [[show]] to present
-  * one to the canvas.
+  * A `Painter` owns the GPU device and a [[Surface]] (a browser canvas, or a
+  * [[PixelFrames]] / [[PixelImage]] container offline), and is the factory for
+  * every rendering resource: [[shade]]/[[layerShade]] (shaders), [[form]]
+  * (geometry), [[shape]] (drawable), [[layer]] (full-screen post-processing
+  * pass), [[panel]] (render target), [[binding]] (uniform buffers) and
+  * samplers. Per frame you call [[paint]] to render panels off-screen and
+  * [[show]] to present one to the surface.
   *
-  * Don't construct directly — use [[Painter.init]], which sets up the device
-  * and runs your code inside a ready painter:
+  * Don't construct directly — use [[Painter.init]] in the browser, which sets
+  * up the device and runs your code inside a ready painter:
   * {{{
   * Painter.init(canvas): painter =>
   *   val shade = painter.layerShade[(time: Float)]: program => ...
@@ -87,25 +88,48 @@ fn fs_main(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
   *     painter.paint(panel)
   *     painter.show(panel)
   * }}}
+  * Offline, or with a caller-supplied GPU, use [[Painter.create]].
   */
-class Painter(
+class Painter private[painter] (
     val device: GPUDevice,
-    val queue: GPUQueue,
-    val canvas: HTMLCanvasElement,
-    val context: GPUCanvasContext,
-    val preferredFormat: TextureFormat,
+    val surface: Surface,
 ):
+  val queue: GPUQueue = device.queue
+
+  /** The surface's format: the default panel format and the `show` target. */
+  val preferredFormat: TextureFormat = surface.format
+
   private val pipelineCache = Dict[GPURenderPipeline]()
   private var nextShadeId = 0
   private val resizeCallbacks = Arr[(Double, Double) => Unit]()
+  private var _adapterInfo: Opt[GPUAdapterInfo] = null
+  private var _readback: Opt[Readback] = null
+
+  surface.onResize((w, h) => fireResize(w, h))
+
+  /** The adapter this painter's device came from; null when the painter was
+    * handed a device.
+    */
+  def adapterInfo: Opt[GPUAdapterInfo] = _adapterInfo
+
+  /** The browser canvas this painter presents to. Throws on a painter without
+    * a [[CanvasSurface]] (offline containers).
+    */
+  def canvas: HTMLCanvasElement = surface match
+    case s: CanvasSurface => s.canvas
+    case _ => throw jsError("Painter.canvas: this painter has no canvas")
+
+  private[painter] def readback: Readback =
+    if _readback.isNull then _readback = Readback(device)
+    _readback.get
 
   /** Register a callback invoked with `(width, height)` **immediately** (with
-    * the current canvas size) and again on every canvas resize. Use it to
+    * the current surface size) and again on every surface resize. Use it to
     * update aspect-dependent uniforms (camera aspect, resolution bindings).
     */
   def onResize(cb: (Double, Double) => Unit): Unit =
     resizeCallbacks.push(cb)
-    cb(canvas.width, canvas.height)
+    cb(surface.width, surface.height)
 
   private[painter] def fireResize(w: Double, h: Double): Unit =
     var k = 0
@@ -113,15 +137,23 @@ class Painter(
       resizeCallbacks(k)(w, h)
       k += 1
 
-  /** Current canvas width in physical pixels. `Double`, to match
+  /** Current surface width in physical pixels. `Double`, to match
     * [[onResize]] — sizes are almost always used in ratios and float math.
     */
-  def width: Double = canvas.width
+  def width: Double = surface.width
 
-  /** Current canvas height in physical pixels. `Double`, to match
+  /** Current surface height in physical pixels. `Double`, to match
     * [[onResize]] — sizes are almost always used in ratios and float math.
     */
-  def height: Double = canvas.height
+  def height: Double = surface.height
+
+  /** Resolves once every pending readback has landed in its container; only
+    * then is a [[PixelFrames]] / [[PixelImage]] target complete. Not a step of
+    * normal rendering: with nothing to read back it resolves immediately.
+    */
+  def awaitReadback(): js.Promise[Unit] =
+    if _readback.isNull then js.Promise.resolve[Unit](())
+    else _readback.get.awaitAll()
 
   /** Convenience: set up a `CanvasInput` for this painter's canvas with the
     * interactive-canvas defaults (focusable, cleared outline, focus on
@@ -787,14 +819,15 @@ class Painter(
     * painter.draw(shape2) // blends over shape1
     * }}}
     * For multi-pass / off-screen rendering use [[panel]] + [[paint]] +
-    * [[show]].
+    * [[show]]. On a container painter `draw` output is not read back; draw
+    * into a panel and `show` it instead.
     */
   def draw(
       shape: AnyShape,
       clearColor: Opt[ClearColor] = null,
   ): Unit =
     val encoder = device.createCommandEncoder()
-    val textureView = context.getCurrentTexture().createView()
+    val textureView = surface.currentTexture().createView()
 
     val colorAttachment =
       if clearColor.notNull then
@@ -826,9 +859,7 @@ class Painter(
   // =========================================================================
 
   private def paintPanel(panel: Panel): Unit =
-    val w = canvas.width
-    val h = canvas.height
-    panel.ensureSize(w, h)
+    panel.ensureSize(surface.width, surface.height)
     val msaa = panel.multisample
 
     // Step 1: render shapes into main texture(s)
@@ -1200,48 +1231,19 @@ class Painter(
     paintPanel(k)
     paintPanel(l)
 
-  /** Present an already-[[paint]]ed panel's output to the canvas (blits its
-    * texture to the swap chain). Typically the last call each frame:
-    * `paint(...)` then `show(finalPanel)`.
+  /** Present an already-[[paint]]ed panel's output to the surface. Typically
+    * the last call each frame: `paint(...)` then `show(finalPanel)`.
+    *
+    * On a canvas painter this blits to the canvas. On a container painter it
+    * reads back right away: one frame appended to a [[PixelFrames]], or a
+    * [[PixelImage]]'s `data` overwritten — complete once [[awaitReadback]]
+    * resolves. The blit samples the panel, so a panel of another size is
+    * scaled and one of another format converted; at equal size it is exact.
     */
   def show(panel: Panel): Unit =
-    // TODO(perf, micro): this presents via a full-screen triangle that
-    // `textureSample`s the panel with a sampler. When the panel matches the
-    // canvas size exactly (the common case), a sampler-free 1:1 path —
-    // `textureLoad(panel, vec2i(fragCoord.xy))`, or even a `copyTextureToTexture`
-    // when formats are copy-compatible — would skip the sampler/interpolation.
-    // Likely negligible; revisit only if `show` ever shows up in a profile.
     val encoder = device.createCommandEncoder()
-    val swapChainView = context.getCurrentTexture().createView()
-
-    val pass = encoder.beginRenderPass(
-      Obj.literal(
-        colorAttachments = Arr(
-          Obj.literal(
-            view = swapChainView,
-            loadOp = "load",
-            storeOp = "store",
-          ),
-        ),
-      ),
-    )
-
-    val bindGroup = device.createBindGroup(
-      Obj.literal(
-        layout = blitBindGroupLayout,
-        entries = Arr(
-          Obj.literal(binding = 0, resource = panel.textureView),
-          Obj.literal(binding = 1, resource = blitSampler),
-        ),
-      ),
-    )
-
-    pass.setPipeline(blitPipeline)
-    pass.setBindGroup(0, bindGroup)
-    pass.draw(3)
-    pass.end()
-
-    queue.submit(Arr(encoder.finish()))
+    blitInto(encoder, panel, surface.currentTexture(), preferredFormat)
+    surface.present(encoder)
 
   /** Convenience: [[paint]] then [[show]] a single panel. Use the separate
     * calls when you paint several panels before presenting one.
@@ -1251,8 +1253,49 @@ class Painter(
     show(p)
 
   // =========================================================================
-  // Blit pipeline — created lazily on first show()
+  // Blit — the one present algorithm (show) and the mip-chain downsample
   // =========================================================================
+
+  /** Blit slot 0 of `panel` into `dst`: a full-screen triangle sampling the
+    * panel with a nearest sampler. Shared by every `show` target. The fragment
+    * stage returns `vec4<f32>` and the GPU stores it in `dstFormat`, so
+    * scaling and format conversion need no extra code.
+    */
+  private[painter] def blitInto(
+      encoder: GPUCommandEncoder,
+      panel: Panel,
+      dst: GPUTexture,
+      dstFormat: TextureFormat,
+  ): Unit =
+    val pass = encoder.beginRenderPass(
+      Obj.literal(
+        colorAttachments = Arr(
+          Obj.literal(
+            view = dst.createView(),
+            loadOp = "clear",
+            storeOp = "store",
+            clearValue = Obj.literal(r = 0, g = 0, b = 0, a = 0),
+          ),
+        ),
+      ),
+    )
+    val bundle = panel.views(0)
+    var group = bundle.blitGroup
+    if group.isNull then
+      group = device.createBindGroup(
+        Obj.literal(
+          layout = blitBindGroupLayout,
+          entries = Arr(
+            Obj.literal(binding = 0, resource = bundle.attach),
+            Obj.literal(binding = 1, resource = blitSampler),
+          ),
+        ),
+      )
+      bundle.blitGroup = group
+    pass.setPipeline(blitPipelineFor(dstFormat))
+    pass.setBindGroup(0, group.get)
+    pass.draw(3)
+    pass.end()
 
   private lazy val blitSampler: GPUSampler =
     device.createSampler(
@@ -1277,23 +1320,41 @@ class Painter(
       ),
     )
 
-  private lazy val blitPipeline: GPURenderPipeline =
-    val module = device.createShaderModule(Obj.literal(code = BLIT_WGSL))
-    val pipelineLayout = device.createPipelineLayout(
+  private lazy val blitModule: GPUShaderModule =
+    device.createShaderModule(Obj.literal(code = BLIT_WGSL))
+
+  private lazy val blitPipelineLayout: GPUPipelineLayout =
+    device.createPipelineLayout(
       Obj.literal(bindGroupLayouts = Arr(blitBindGroupLayout)),
     )
-    device.createRenderPipeline(
-      Obj.literal(
-        layout = pipelineLayout,
-        vertex = Obj.literal(module = module, entryPoint = "vs_main"),
-        fragment = Obj.literal(
-          module = module,
-          entryPoint = "fs_main",
-          targets = Arr(Obj.literal(format = preferredFormat.toJs)),
+
+  private val blitPipelines: Dict[GPURenderPipeline] =
+    Dict[GPURenderPipeline]()
+
+  /** The blit pipeline for one destination format, created on first use.
+    * Shared by `show` (nearest sampler) and mip generation (linear sampler):
+    * same shader and layout, only the bind group's sampler differs.
+    */
+  private def blitPipelineFor(format: TextureFormat): GPURenderPipeline =
+    val key = format.asString
+    // One lookup, not a `has` + `at` pair — this runs per show.
+    val cached = blitPipelines.at(key)
+    if !js.isUndefined(cached.asInstanceOf[js.Any]) then cached
+    else
+      val p = device.createRenderPipeline(
+        Obj.literal(
+          layout = blitPipelineLayout,
+          vertex = Obj.literal(module = blitModule, entryPoint = "vs_main"),
+          fragment = Obj.literal(
+            module = blitModule,
+            entryPoint = "fs_main",
+            targets = Arr(Obj.literal(format = format.toJs)),
+          ),
+          primitive = Obj.literal(topology = "triangle-list"),
         ),
-        primitive = Obj.literal(topology = "triangle-list"),
-      ),
-    )
+      )
+      blitPipelines.set(key, p)
+      p
 
   // =========================================================================
   // MSAA depth resolve — single-sample depth from a multisample attachment
@@ -1377,38 +1438,12 @@ class Painter(
       Obj.literal(magFilter = "linear", minFilter = "linear"),
     )
 
-  private val mipBlitPipelines: Dict[GPURenderPipeline] =
-    Dict[GPURenderPipeline]()
-
-  private def getMipBlitPipeline(format: TextureFormat): GPURenderPipeline =
-    val key = format.asString
-    if mipBlitPipelines.has(key) then mipBlitPipelines.at(key)
-    else
-      val module = device.createShaderModule(Obj.literal(code = BLIT_WGSL))
-      val pl = device.createPipelineLayout(
-        Obj.literal(bindGroupLayouts = Arr(blitBindGroupLayout)),
-      )
-      val p = device.createRenderPipeline(
-        Obj.literal(
-          layout = pl,
-          vertex = Obj.literal(module = module, entryPoint = "vs_main"),
-          fragment = Obj.literal(
-            module = module,
-            entryPoint = "fs_main",
-            targets = Arr(Obj.literal(format = format.toJs)),
-          ),
-          primitive = Obj.literal(topology = "triangle-list"),
-        ),
-      )
-      mipBlitPipelines.set(key, p)
-      p
-
   private def generateMipmaps(panel: Panel): Unit =
     val mipCount = panel.mipLevelCount
     if mipCount <= 1 then return
     val fmt =
       if panel.formats.length > 0 then panel.formats(0) else preferredFormat
-    val pipeline = getMipBlitPipeline(fmt)
+    val pipeline = blitPipelineFor(fmt)
 
     var i = 1
     while i < mipCount do
@@ -1900,52 +1935,82 @@ object Painter:
       )
     else
       val gpu = maybeGpu.safe
-      for
-        adapter <- gpu.requestAdapter().orError("Failed to get WebGPU adapter")
-        device <- adapter.requestDevice()
-      yield
-        val queue = device.queue
-        val context = WebGPU.getContext(canvas)
-        val format = gpu.getPreferredCanvasFormat()
+      val surface = CanvasSurface(
+        canvas,
+        format = TextureFormat.of(gpu.getPreferredCanvasFormat()),
+      )
+      setup(surface, gpu)
 
-        context.configure(
-          Obj.literal(
-            device = device,
-            format = format,
-          ),
-        )
+  /** Create a painter on `target` with a caller-supplied `gpu` — offline
+    * (node-webgpu's `create([...])`) or in the browser with adapter options.
+    * The library never looks the GPU up.
+    *
+    *   - `target` — a [[PixelFrames]] / [[PixelImage]] container (offline:
+    *     `show` reads back into it), or a [[Surface]] such as
+    *     `CanvasSurface(canvas)`. Panels default to its format.
+    *   - `powerPreference`, `forceFallbackAdapter`, `requireAdapter`,
+    *     `logAdapter` — see [[WebGPU.requestAdapter]].
+    *   - `requiredFeatures`, `requiredLimits` — see [[WebGPU.requestDevice]].
+    *     An `rgba32float` container needs `Arr("float32-filterable")`.
+    */
+  def create(
+      target: PixelTarget | Surface,
+      gpu: GPU,
+      powerPreference: Maybe[PowerPreference] = Maybe.Not,
+      forceFallbackAdapter: Boolean = false,
+      requireAdapter: Maybe[js.Function1[GPUAdapterInfo, Boolean]] = Maybe.Not,
+      requiredFeatures: Maybe[Arr[String]] = Maybe.Not,
+      requiredLimits: Maybe[js.Object] = Maybe.Not,
+      logAdapter: Boolean = false,
+  ): js.Promise[Painter] =
+    WebGPU
+      .requestAdapter(
+        gpu,
+        powerPreference,
+        forceFallbackAdapter,
+        requireAdapter,
+        logAdapter,
+      )
+      .flatMap: adapter =>
+        WebGPU
+          .requestDevice(adapter, requiredFeatures, requiredLimits)
+          .map: device =>
+            val painter = create(target, device)
+            painter._adapterInfo = adapter.info
+            painter
 
-        val painter =
-          Painter(device, queue, canvas, context, TextureFormat.of(format))
+  /** Create a painter on `target` with a caller-supplied `device`;
+    * synchronous, no lookups at all. For adapter-level control in user code
+    * (`WebGPU.requestAdapter` → `WebGPU.requestDevice` → here).
+    */
+  def create(target: PixelTarget | Surface, device: GPUDevice): Painter =
+    if target.isInstanceOf[Surface] then
+      build(target.asInstanceOf[Surface], device)
+    else
+      val readback = Readback(device)
+      val painter = build(
+        CaptureSurface(target.asInstanceOf[PixelTarget], readback),
+        device,
+      )
+      painter._readback = readback
+      painter
 
-        // Set initial canvas size
-        val w = canvas.clientWidth
-        val h = canvas.clientHeight
-        canvas.width = w
-        canvas.height = h
+  // `init` goes through here, not through the union-typed `create`, so a
+  // browser bundle never links `CaptureSurface`.
+  private def setup(surface: Surface, gpu: GPU): js.Promise[Painter] =
+    WebGPU
+      .requestAdapter(gpu)
+      .flatMap: adapter =>
+        WebGPU
+          .requestDevice(adapter)
+          .map: device =>
+            val painter = build(surface, device)
+            painter._adapterInfo = adapter.info
+            painter
 
-        // Set up ResizeObserver — updates canvas dimensions and fires painter callbacks
-        val observer = js.Dynamic
-          .newInstance(js.Dynamic.global.ResizeObserver)(
-            ((entries: js.Array[js.Dynamic]) =>
-              val entry = entries(0)
-              val rw: Double = entry.contentRect.width.asInstanceOf[Double]
-              val rh: Double = entry.contentRect.height.asInstanceOf[Double]
-              // Writing width/height resets the canvas even to the same value,
-              // wiping a frame painted during setup; the observer's initial
-              // call always reports the size set above.
-              if rw > 0 && rh > 0 then
-                val w = rw.toInt
-                val h = rh.toInt
-                if w != canvas.width || h != canvas.height then
-                  canvas.width = w
-                  canvas.height = h
-                  painter.fireResize(rw, rh),
-            ): js.Function1[js.Array[js.Dynamic], Unit],
-          )
-        observer.observe(canvas)
-
-        painter
+  private def build(surface: Surface, device: GPUDevice): Painter =
+    surface.configure(device)
+    new Painter(device, surface)
 
   /** Initialise WebGPU and run `setup` with the ready [[Painter]] — the
     * standard sketch entry point. All resource creation, `onResize`, and the

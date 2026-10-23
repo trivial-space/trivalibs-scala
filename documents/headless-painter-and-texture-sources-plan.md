@@ -1,6 +1,6 @@
 # Headless painter, render-to-file, and texture sources
 
-**Status: planned, not implemented. §1–3 (Milestone 1) reviewed and approved; §4
+**Status: M1.0, M1.0b and M1.1 implemented (browser check of the examples pending); rest planned. §1–3 (Milestone 1) reviewed and approved; §4
 onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**,
 not on-screen rendering outside the browser. Takes over the host seam and the
 headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
@@ -73,7 +73,8 @@ Takeaways:
   `@std/webgpu` `createCapture` + `getRowPadding` is the same pattern. The
   painter's capture surface is this, packaged.
 - node-webgpu keeps the process alive while the `GPU` object returned by
-  `create()` is referenced. For render-and-exit scripts the driver ends with
+  `create()` is referenced (**to verify, M1.3**). For render-and-exit scripts
+  the driver ends with
   `process.exit(0)` (`Deno.exit(0)`) once the render promise — file writes and
   encoder subprocesses included — has resolved; the OS and driver reclaim all
   GPU memory at process end. No library teardown needed for this milestone;
@@ -219,15 +220,18 @@ trait Surface:
   def configure(device: GPUDevice): Unit
   /** Texture `show` / `draw` render into this frame. */
   def currentTexture(): GPUTexture
-  /** End of one presented frame. Browser: no-op. Native window: present.
-    * Capture: read the frame back. */
+  /** End of one presented frame: finishes and submits `encoder`. Browser:
+    * just the submit. Native window: submit, then present. Capture: append
+    * the copy, submit, read back. */
   def present(encoder: GPUCommandEncoder): Unit
   /** Resize notifications; never fires on fixed-size surfaces. */
   def onResize(cb: (Int, Int) => Unit): Unit
 ```
 
 `present` takes the frame's encoder so a capture surface can append its
-`copyTextureToBuffer` to the same submission as the blit.
+`copyTextureToBuffer` to the same submission as the blit. It also submits,
+because the capture has to submit before it can `mapAsync` the staging
+buffer.
 
 Frame scheduling is **not** on the trait: offline renders are driven by a user
 loop with a fixed `tpf` (§3.7), and the browser keeps `animate` as is.
@@ -236,7 +240,7 @@ Scheduling only becomes a surface concern for native windows (no
 
 | Surface                           | `currentTexture`                               | `present`                                                                | `onResize`       | Phase |
 | --------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------ | ---------------- | ----- |
-| `CanvasSurface(canvas)`           | `context.getCurrentTexture()`                  | no-op                                                                    | `ResizeObserver` | M1.0  |
+| `CanvasSurface(canvas)`           | `context.getCurrentTexture()`                  | submit                                                                   | `ResizeObserver` | M1.0  |
 | `CaptureSurface` (internal, §3.4) | owned texture, `RENDER_ATTACHMENT \| COPY_SRC` | copy → staging buffer → `mapAsync` → append (frames) / overwrite (image) | never            | M1.1  |
 
 `CaptureSurface` is **not** user-facing: the user hands the painter a plain
@@ -246,9 +250,17 @@ so the container stays pure data.
 
 `CanvasSurface` is today's `Painter.init` body moved verbatim: browser behavior
 does not change. It is the only place that calls
-`gpu.getPreferredCanvasFormat()` and `ResizeObserver`. Typed as
-`HTMLCanvasElement | OffscreenCanvas`, duck-typed at runtime
-(`getContext("webgpu")`).
+`gpu.getPreferredCanvasFormat()` and `ResizeObserver`.
+`CanvasSurface(canvas, format = …)` takes an optional format. Without one it
+uses the browser's preferred canvas format, read from `navigator.gpu`, with
+`bgra8unorm` as the fallback. That read is browser-only and takes only a
+format, not the GPU. As implemented it takes an `HTMLCanvasElement` only.
+`OffscreenCanvas` has no client size and no `ResizeObserver`, so it would need
+its own sizing; that is added once something needs it.
+
+One small difference: `onResize` callbacks now receive the integer canvas size.
+Before, they got the observer's fractional CSS size, while the canvas itself
+was already integer-sized.
 
 **No auto-detection** (reasoning carried over from the host-seam design in
 [non-browser-hosts-plan.md](non-browser-hosts-plan.md)): a detecting
@@ -333,7 +345,9 @@ where the `navigator` read is again the caller's.
 `Painter` gains `adapterInfo: Opt[GPUAdapterInfo]` (null when handed a device),
 and `surface: Surface` (the internal `CaptureSurface` when given a
 `PixelTarget`). `width` / `height` / `onResize` delegate to the surface;
-`canvas` / `context` leave the constructor.
+`canvas` / `context` leave the constructor. `p.canvas` stays as an accessor,
+since the guides attach DOM listeners to it, and it throws on a painter
+without a `CanvasSurface`. `p.context` is gone; nothing used it.
 
 ### 3.3 Adapter control, offline
 
@@ -347,7 +361,7 @@ addon):
 | -------------------- | ----------------------------------------------------- |
 | `--backend vulkan`   | `create(["backend=vulkan"])`                          |
 | `--adapter <name>`   | `create(["adapter=<name>"])`                          |
-| `--software`         | `forceFallbackAdapter = true`                         |
+| `--software`         | `forceFallbackAdapter = true` (no adapter in node-webgpu 0.6.2 on Linux; use `--adapter` with the llvmpipe name) |
 | `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json`, set before spawn |
 
 A runtime with its own WebGPU (Bun's native one, if it lands) maps the same
@@ -1338,7 +1352,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 
 ### Milestone 1 — headless painter
 
-**M1.0 — host seam.**
+**M1.0 — host seam.** 🔄 implemented, browser check pending.
 
 - `Surface` + `CanvasSurface`.
 - `Painter.create(surface, gpu | device)`, which takes `Surface` targets only.
@@ -1350,7 +1364,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 - Facade additions (§5).
 - _Proof:_ no behavior change; all examples render.
 
-**M1.0b — shared blit (§3.4).**
+**M1.0b — shared blit (§3.4).** 🔄 implemented, browser check pending.
 
 - A shared `blitInto` (sampled blit), with a per-format pipeline cache shared
   with mip generation (`blitPipelineFor`), and the blit bind group cached on
@@ -1358,7 +1372,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 - Canvas `show` switched over to it, and the perf TODO removed.
 - _Proof:_ browser only; all examples render identically.
 
-**M1.1 — containers and readback (§3.3–3.5).**
+**M1.1 — containers and readback (§3.3–3.5).** ✅ verified on Node and Bun.
 
 - `PixelFrames` / `PixelImage` / `PixelFormat` + `.d.ts`, and the `Float16Array`
   facade.
@@ -1388,11 +1402,20 @@ Each step lands independently and leaves `examples/` and the sketches working.
   the canvas keeps rendering, and an offline example that writes a second,
   smaller preview image.
 
-**M1.3 — GPU tests.**
+**M1.3 — GPU tests and process lifecycle.**
 
 - munit GPU integration tests. `scala-cli test` already runs on Node, so with
   `webgpu` installed a test can render and read back (lavapipe in CI).
-- _Proof:_ pixel assertions on a known render.
+- Verify the process lifecycle claimed in §1.1:
+  - whether node-webgpu keeps the process alive while the `GPU` is
+    referenced, so that a driver must end with `process.exit(0)`;
+  - whether exiting right after the last readback is safe, with GPU memory
+    reclaimed and no driver errors;
+  - the same on Bun, if the drivers run there.
+
+  Only verified behavior goes into the setup guide (§6.1).
+- _Proof:_ pixel assertions on a known render, and a recorded lifecycle result
+  per runtime.
 
 **M1.4 — setup guide (§6.1).** Written once M1.0–M1.2b have landed, against the
 shipped API.
@@ -1503,8 +1526,9 @@ Contents:
   the `awaitReadback()` semantics, the memory limits of the simple container,
   and host-side processing recipes (PNG, ffmpeg mp4 / gif, `ImageData` in the
   browser).
-- **Process lifecycle.** `process.exit` after rendering, and a pointer to the
-  deferred `destroy()` for long-running processes.
+- **Process lifecycle.** Only what M1.3 verified: whether and when a driver
+  must call `process.exit`, and a pointer to the deferred `destroy()` for
+  long-running processes.
 
 Native-window surfaces are not a phase of this plan — see
 [non-browser-hosts-plan.md](non-browser-hosts-plan.md).
@@ -1516,9 +1540,17 @@ scripts and are run, not deployed.
 
 ## 7. To verify at implementation time
 
-- **Bun + node-webgpu:** does Bun load the `webgpu` Node-API addon, and do
-  `create()`, `mapAsync` and process exit behave as on Node? This decides
-  whether the drivers also run on Bun, or on Node only.
+- ✅ **Bun + node-webgpu** (checked in M1.1, webgpu 0.6.2, Bun 1.4.2, Node
+  24.16): Bun loads the addon. `create()`, `mapAsync`, and the
+  `rgba8unorm` / `rgba16float` / `rgba32float` readbacks give identical
+  results on both runtimes. So the drivers run on Node and Bun.
+- **Process exit** (observed in M1.1, verified in M1.3): the headless example
+  exits on its own on Node and Bun, without `process.exit`. That contradicts
+  the §1.1 claim.
+- **Software adapter** (observed in M1.1): `forceFallbackAdapter: true`
+  returned no adapter, or on a reused `GPU` the hardware one. Dawn in node-webgpu
+  0.6.2 on Linux ships no SwiftShader. Mesa's llvmpipe is listed as a Vulkan
+  adapter and renders identically when picked by name (`--adapter`).
 - Bun native WebGPU: merge status of the PR stack, backend env var, whether
   `GPUAdapterInfo` is populated. Only relevant once it lands.
 - `Float16Array`: Node 24.16 and Bun 1.4.2 are checked.
@@ -1555,6 +1587,149 @@ scripts and are run, not deployed.
 - **Default size of a source panel** — decided: the source's intrinsic size, not
   sticky after unsetting, with `followSurface = true` as the opt-in to tracking
   (§4.2).
+
+## 9. Implementation log
+
+### 2026-10-24 — M1.0, M1.0b, M1.1
+
+Implemented together, in one change, because M1.1's readback is built on
+M1.0b's `blitInto`. Not committed yet.
+
+**Landed:**
+
+- `src/graphics/painter/surface.scala`: the `Surface` trait and `CanvasSurface`.
+- `src/graphics/painter/pixels.scala`: `PixelFormat`, `PixelData`,
+  `PixelFrames`, `PixelImage`, `PixelTarget`, and the `Float16Array` facade.
+- `src/graphics/painter/readback.scala`: `Readback` (capture textures, staging
+  pool, read, `awaitAll`), the internal `CaptureSurface`, and a `WeakIntMap`
+  facade.
+- `src/graphics/painter/painter.scala`:
+  - the constructor is now `(device, surface)`;
+  - `create` ×2 and the internal `setup` / `build`;
+  - `adapterInfo`, `awaitReadback`, `blitInto` and `blitPipelineFor`;
+  - `show`, `draw` and `paintPanel` go through the surface.
+- `src/graphics/painter/panel.scala`: `TextureViewBundle.blitGroup`.
+- `src/graphics/painter/webgpu.scala`: the facade additions, `GPUMapMode`,
+  `PowerPreference`, and `WebGPU.requestAdapter` / `requestDevice` /
+  `adapterNamed` / `describe`.
+- `examples/headless_triangle/`: `HeadlessTriangle.scala`, `pixels.d.ts`, and
+  `render.node.ts`.
+- `package.json`: the dev dependency `webgpu` 0.6.2. `.gitignore`: the
+  example's `out/`.
+
+**Verified:**
+
+- `bun run check`, clean.
+- All 22 sketches of the consuming repo compile against the change (compile
+  only, so no checked-in `main.js` was rebuilt).
+- The headless example on Node 24.16 and Bun 1.4.2 gives identical results:
+  - an `rgba8unorm` PNG (top row first, correct orientation);
+  - `rgba16float` keeps values above 1 (max 3.97 at intensity 4);
+  - `rgba32float` works with `float32-filterable`;
+  - `PixelFrames` gets 3 distinct frames in `show` order;
+  - a `PixelImage` keeps the last of 5 in-flight `show`s;
+  - a wrong array type, a wrong length and an unknown format are each rejected
+    at `create`.
+- Adapter flags:
+  - `--list-adapters` relays Dawn's list (Intel Vulkan, llvmpipe);
+  - `--require nvidia` rejects with the adapter info;
+  - `--require intel` and `--backend vulkan` work;
+  - `--backend opengles` gives no adapter here;
+  - llvmpipe renders identically when picked with `--adapter`.
+- Browser, in headless Chromium with WebGPU, against a baseline built from
+  `git archive HEAD`:
+  - all 19 examples load with no console errors;
+  - every deterministic example is pixel-identical (blur, deferred, mipmaps,
+    panel\_\*, painter\_\*, sdf_trace, noise_tests, simple_triangle);
+  - the animated and random ones differ even baseline against baseline, so
+    they are inconclusive;
+  - `noise_cpu_gpu` sometimes stays blank in headless Chromium, in both
+    builds.
+- **Not exercised:** the `rgba32float` fail-fast without the feature. The test
+  GPU supports `float32-filterable`, and the example requests it.
+
+**Deviations from the plan** (§3 updated where marked):
+
+1. **`Surface.present` submits.** It finishes and submits the frame's
+   encoder; `CanvasSurface.present` is just the submit. The capture has to
+   submit before `mapAsync`, so the surface owns the end of the frame. (§3.1)
+2. **`Painter.init` doesn't call the union-typed `create`.** Both go through a
+   private `setup(surface, gpu)` and `build(surface, device)`, so a browser
+   bundle never links `CaptureSurface`. The plan described `init` as sugar
+   over `create`; the behavior is the same.
+3. **`CanvasSurface`** has a private constructor and
+   `CanvasSurface(canvas, format = …)`. A constructor parameter named `format`
+   would clash with the `format` member. (§3.1)
+   - The default format is `navigator.gpu.getPreferredCanvasFormat()`, or
+     `bgra8unorm` when that is missing.
+   - It takes an `HTMLCanvasElement` only, not
+     `HTMLCanvasElement | OffscreenCanvas`.
+4. **`p.canvas` stays as an accessor**, since the guides attach DOM listeners
+   to it. It throws on a painter without a `CanvasSurface`. `p.context` is
+   removed. (§3.2)
+5. **`onResize` fires with the integer canvas size.** Before, it fired with
+   the observer's fractional CSS size. (§3.1)
+6. **The `Painter` constructor is `private[painter] (device, surface)`.**
+   `queue` and `preferredFormat` are now derived vals.
+7. **The phasing was collapsed.** M1.0's "Surface targets only" didn't happen:
+   `create` accepts containers from the start, because M1.0–M1.1 landed
+   together.
+8. **The blit uses `loadOp: "clear"`**, where `show` used `"load"`. The output
+   is the same, because the full-screen triangle with no blending writes every
+   pixel.
+9. **The blit's shader module and pipeline layout are created once.** The old
+   mip cache created both again for every format. `getMipBlitPipeline` and the
+   `lazy val blitPipeline` are gone; `blitPipelineFor` is used by both `show`
+   and mip generation.
+10. **Readback ownership.** The plan had `CaptureSurface` own its
+    capture-texture entry. Instead a separate `Readback` class owns the
+    capture-texture cache (per size and format) and the staging pool.
+    - `create` builds one for a container painter and passes it to both the
+      surface and the painter.
+    - Any other painter creates one lazily (for `showTo`, M1.2b).
+11. **Readback ordering mechanics**, which the plan left open:
+    - a `PixelFrames` reserves its frame slot (a `null` placeholder) at submit
+      time;
+    - a `PixelImage` keeps its last-written submission index in a `WeakMap`;
+    - `awaitAll` waits for a snapshot of the pending reads, then repeats until
+      none are left. That also covers reads submitted while waiting.
+12. **`Float16Array` facade.** It lives in `trivalibs.graphics.painter`, not in
+    `utils`. Its primary constructor is `(length: Int)`: Scala.js rejects a
+    private constructor on a native class, and `private[this]` is deprecated.
+13. **Example details:**
+    - the render function is
+      `render(gpu, out, frameCount, intensity, software, requireName)`;
+    - the driver has a small PNG encoder (8 and 16 bit) over `node:zlib`, in
+      place of pngjs, so `webgpu` is the only dependency;
+    - the 16-bit output is a PNG clamped to `[0,1]`;
+    - one driver, `render.node.ts`, serves Node and Bun;
+    - `pixels.d.ts` lives in the example folder.
+14. **Facade scope.** Not added: `OffscreenCanvas` and `VideoFrame` (M2),
+    `importExternalTexture`, and `requestVideoFrameCallback` (later).
+    `writeTexture`, `copyExternalImageToTexture` and `copyTextureToTexture`
+    are added now, unused until M2.
+
+**Findings:**
+
+- Bun loads node-webgpu's Node-API addon, so the drivers run on both runtimes
+  (§7).
+- The headless process exits on its own, without `process.exit`, on Node and
+  Bun. That contradicts §1.1. It is verified in M1.3 before it goes into the
+  guide.
+- `forceFallbackAdapter: true` gives no adapter in node-webgpu 0.6.2 on Linux,
+  since that build ships no SwiftShader. The software path is llvmpipe, picked
+  by name (§3.3, §7).
+- **Library trap:** `.get(x)` on a `js.Dynamic` resolves to trivalibs'
+  `Opt.get` extension, because every value is an `Opt[A]`. It then calls the
+  result as a function: `(0, this.l1)(target) is not a function`. The fix is a
+  typed facade (`WeakIntMap`). This is a candidate for the "known traps" list
+  in `CLAUDE.md`.
+- Shade creation logs every generated WGSL to the console (`log(wgsl)`, which
+  predates this change). That is noisy in offline driver output. Leave it, or
+  gate it, later.
+
+**Open:** M1.0 and M1.0b are marked as awaiting a browser check by hand (§6).
+The headless Chromium comparison above covers the deterministic examples only.
 
 ## Sources
 

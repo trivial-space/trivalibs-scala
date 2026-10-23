@@ -2,7 +2,7 @@ package trivalibs.graphics.painter
 
 import org.scalajs.dom
 import org.scalajs.dom.HTMLCanvasElement
-import trivalibs.utils.js.Arr
+import trivalibs.utils.js.*
 
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
@@ -22,12 +22,34 @@ trait GPU extends js.Object:
 
 @js.native
 trait GPUAdapter extends js.Object:
+  /** What the runtime picked: vendor, architecture, device, description. */
+  val info: GPUAdapterInfo = js.native
+  val features: GPUSupportedFeatures = js.native
+  val limits: js.Dynamic = js.native
   def requestDevice(): js.Promise[GPUDevice] = js.native
   def requestDevice(descriptor: js.Dynamic): js.Promise[GPUDevice] = js.native
+
+/** Description of a [[GPUAdapter]]. Fields may be empty strings: browsers
+  * report only what their privacy rules allow.
+  */
+@js.native
+trait GPUAdapterInfo extends js.Object:
+  val vendor: String = js.native
+  val architecture: String = js.native
+  val device: String = js.native
+  val description: String = js.native
+
+/** Set-like list of feature names (`"float32-filterable"`, …). */
+@js.native
+trait GPUSupportedFeatures extends js.Object:
+  def has(name: String): Boolean = js.native
 
 @js.native
 trait GPUDevice extends js.Object:
   val queue: GPUQueue = js.native
+  val features: GPUSupportedFeatures = js.native
+  val lost: js.Promise[js.Dynamic] = js.native
+  def destroy(): Unit = js.native
   def createShaderModule(descriptor: js.Dynamic): GPUShaderModule = js.native
   def createRenderPipeline(descriptor: js.Dynamic): GPURenderPipeline =
     js.native
@@ -69,6 +91,18 @@ trait GPUQueue extends js.Object:
       dataOffset: Double,
       size: Double,
   ): Unit = js.native
+  def writeTexture(
+      destination: js.Dynamic,
+      data: ArrayBufferView | ArrayBuffer,
+      dataLayout: js.Dynamic,
+      size: js.Dynamic,
+  ): Unit = js.native
+  def copyExternalImageToTexture(
+      source: js.Dynamic,
+      destination: js.Dynamic,
+      copySize: js.Dynamic,
+  ): Unit = js.native
+  def onSubmittedWorkDone(): js.Promise[Unit] = js.native
 
 // =============================================================================
 // Shader and Pipeline
@@ -91,6 +125,16 @@ trait GPUPipelineLayout extends js.Object
 @js.native
 trait GPUCommandEncoder extends js.Object:
   def beginRenderPass(descriptor: js.Dynamic): GPURenderPassEncoder = js.native
+  def copyTextureToBuffer(
+      source: js.Dynamic,
+      destination: js.Dynamic,
+      copySize: js.Dynamic,
+  ): Unit = js.native
+  def copyTextureToTexture(
+      source: js.Dynamic,
+      destination: js.Dynamic,
+      copySize: js.Dynamic,
+  ): Unit = js.native
   def finish(): GPUCommandBuffer = js.native
   def finish(descriptor: js.Dynamic): GPUCommandBuffer = js.native
 
@@ -142,7 +186,12 @@ trait GPUCommandBuffer extends js.Object
 
 @js.native
 trait GPUBuffer extends js.Object:
+  val size: Double = js.native
   def destroy(): Unit = js.native
+  def mapAsync(mode: Int): js.Promise[Unit] = js.native
+  /** A temporary view of the mapped memory, detached on [[unmap]]. */
+  def getMappedRange(): ArrayBuffer = js.native
+  def unmap(): Unit = js.native
 
 @js.native
 trait GPUBindGroup extends js.Object
@@ -161,6 +210,9 @@ trait GPUCanvasContext extends js.Object:
 
 @js.native
 trait GPUTexture extends js.Object:
+  val width: Int = js.native
+  val height: Int = js.native
+  val format: String = js.native
   def createView(): GPUTextureView = js.native
   def createView(descriptor: js.Dynamic): GPUTextureView = js.native
   def destroy(): Unit = js.native
@@ -199,12 +251,25 @@ object GPUShaderStage:
   val FRAGMENT = 0x2
   val COMPUTE = 0x4
 
+object GPUMapMode:
+  val READ = 0x1
+  val WRITE = 0x2
+
+/** Adapter power hint for [[WebGPU.requestAdapter]] / [[Painter.create]]. */
+opaque type PowerPreference = String
+object PowerPreference:
+  val HighPerformance: PowerPreference = "high-performance"
+  val LowPower: PowerPreference = "low-power"
+  extension (p: PowerPreference) inline def toJs: js.Any = p.asInstanceOf[js.Any]
+
 // =============================================================================
 // Helpers
 // =============================================================================
 
 object WebGPU:
-  /** Get the GPU object from navigator, if WebGPU is supported */
+  /** Get the GPU object from navigator, if WebGPU is supported. Browser only;
+    * used by `Painter.init(canvas)`. Offline hosts pass their `GPU` in.
+    */
   def getGPU(): js.UndefOr[GPU] =
     dom.window.navigator
       .asInstanceOf[js.Dynamic]
@@ -214,3 +279,68 @@ object WebGPU:
   /** Get WebGPU context from a canvas element */
   def getContext(canvas: HTMLCanvasElement): GPUCanvasContext =
     canvas.getContext("webgpu").asInstanceOf[GPUCanvasContext]
+
+  /** Request an adapter from `gpu`, then verify it. No lookups: the caller
+    * supplies the `GPU`.
+    *
+    *   - `powerPreference`, `forceFallbackAdapter` — the spec hints;
+    *     `forceFallbackAdapter = true` asks for the software adapter.
+    *   - `requireAdapter` — rejects the promise unless it returns true for the
+    *     adapter's info; the message lists what was found. See [[adapterNamed]].
+    *   - `logAdapter` — prints the adapter info once.
+    */
+  def requestAdapter(
+      gpu: GPU,
+      powerPreference: Maybe[PowerPreference] = Maybe.Not,
+      forceFallbackAdapter: Boolean = false,
+      requireAdapter: Maybe[js.Function1[GPUAdapterInfo, Boolean]] = Maybe.Not,
+      logAdapter: Boolean = false,
+  ): js.Promise[GPUAdapter] =
+    val options = Obj.literal()
+    powerPreference.foreach(p => options.powerPreference = p.toJs)
+    if forceFallbackAdapter then options.forceFallbackAdapter = true
+    gpu
+      .requestAdapter(options)
+      .orError("Failed to get WebGPU adapter")
+      .map: adapter =>
+        if logAdapter then log("WebGPU adapter: " + describe(adapter.info))
+        requireAdapter.foreach: accept =>
+          if !accept(adapter.info) then
+            throw jsError(
+              "WebGPU adapter rejected by requireAdapter: " +
+                describe(adapter.info),
+            )
+        adapter
+
+  /** Request a device from `adapter`, e.g. with
+    * `requiredFeatures = Arr("float32-filterable")` for `rgba32float` output.
+    */
+  def requestDevice(
+      adapter: GPUAdapter,
+      requiredFeatures: Maybe[Arr[String]] = Maybe.Not,
+      requiredLimits: Maybe[js.Object] = Maybe.Not,
+  ): js.Promise[GPUDevice] =
+    val descriptor = Obj.literal()
+    requiredFeatures.foreach(f => descriptor.requiredFeatures = f)
+    requiredLimits.foreach(l => descriptor.requiredLimits = l)
+    adapter.requestDevice(descriptor)
+
+  /** A `requireAdapter` predicate: true when `name` occurs, ignoring case, in
+    * any of the adapter's vendor / architecture / device / description.
+    */
+  def adapterNamed(name: String): js.Function1[GPUAdapterInfo, Boolean] =
+    val needle = name.toLowerCase()
+    (info: GPUAdapterInfo) =>
+      !js.isUndefined(info) && (
+        info.vendor.toLowerCase().indexOf(needle) >= 0 ||
+          info.architecture.toLowerCase().indexOf(needle) >= 0 ||
+          info.device.toLowerCase().indexOf(needle) >= 0 ||
+          info.description.toLowerCase().indexOf(needle) >= 0
+      )
+
+  /** `vendor / architecture / device / description`, for logs and errors. */
+  def describe(info: GPUAdapterInfo): String =
+    if js.isUndefined(info) then "(no adapter info)"
+    else
+      info.vendor + " / " + info.architecture + " / " + info.device + " / " +
+        info.description
