@@ -13,14 +13,14 @@ API must keep compatible with them. Also absorbs the
 Two milestones:
 
 1. **Headless painter + render to file.** The painter runs without a DOM, on any
-   runtime that hands it a spec-conformant `GPU` object (node-webgpu, Deno, Bun
-   once its WebGPU lands). Instead of a canvas it is given a plain data
-   container: a `PixelFrames`, where every `show()` appends one frame, or a
-   `PixelImage`, where every `show()` overwrites the single image. Panels can be
-   read back into the same containers — the path for offline-baked static assets
-   that replace today's init-time bakes (`src/utils/bake/Bake.scala` in the
-   consuming repo). Encoding and file writing happen afterwards, in whatever the
-   host prefers.
+   runtime that hands it a spec-conformant `GPU` object. Verification targets
+   node-webgpu only, on Node (and on Bun, if Bun can load it; to verify).
+   Instead of a canvas it is given a plain data container: a `PixelFrames`,
+   where every `show()` appends one frame, or a `PixelImage`, where every
+   `show()` overwrites the single image. Panels can be read back into the same
+   containers — the path for offline-baked static assets that replace today's
+   init-time bakes (`src/utils/bake/Bake.scala` in the consuming repo). Encoding
+   and file writing happen afterwards, in whatever the host prefers.
 2. **Texture sources on panels.** A panel can take uploaded pixels as one more
    contributor to its image, a background beneath its shapes and layers, or the
    whole image on its own. The sources are raw buffers, `ImageData`,
@@ -32,7 +32,7 @@ The design rule running through both: **Scala describes, the host handles I/O.**
 Scala's value is expressiveness in the graphics domain — scenes, math,
 animation, shaders in custom DSLs. File handling, codecs and process plumbing
 are ordinary host workflows, best written in the host's own language (a short TS
-script on Node/Deno/Bun). So the boundary between the two is **plain JS data**:
+script on Node or Bun). So the boundary between the two is **plain JS data**:
 objects of width, height, format and typed arrays, which either side can create
 and read without importing anything from the other. Output is a `PixelFrames`
 sequence or a `PixelImage` still. Input is a `PixelImage` (§3.5), plus the
@@ -44,13 +44,13 @@ browser's native image types as an input-only fast path where they exist.
 
 ### 1.1 Runtimes
 
-| Runtime          | How you get a `GPU`                                                   | Backend        | Canvas / surface                                                                                                                     | Image APIs                                                                                                          | Status                                                                                           |
-| ---------------- | --------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| **Node**         | `import { create } from 'webgpu'` → `create([...options])`            | Dawn           | none                                                                                                                                 | none (no `ImageBitmap`, no `copyExternalImageToTexture` sources)                                                    | npm `webgpu` 0.6.x, Node ≥ 18                                                                    |
-| **Deno**         | `navigator.gpu` (with `--unstable-webgpu` / `"unstable": ["webgpu"]`) | wgpu           | `Deno.UnsafeWindowSurface` (`getContext("webgpu")`, explicit `present()`, `resize()`); desktop windows from Deno 2.9 `BrowserWindow` | `createImageBitmap(Blob \| ImageData \| ImageBitmap)`; formats + `copyExternalImageToTexture` support **to verify** | unstable flag                                                                                    |
-| **Bun (future)** | `navigator.gpu` + `GPU*` globals, no flag                             | wgpu-core 30   | **none** ("there is no canvas")                                                                                                      | `GPUExternalTexture` / `copyExternalImageToTexture` explicitly out of scope                                         | PR [oven-sh/bun#42768](https://github.com/oven-sh/bun/pull/42768) open, being split into a stack |
-| **Bun (today)**  | `bun-webgpu` (Dawn via FFI) or `wgpu-polyfill` (wgpu-native)          | Dawn / wgpu    | none                                                                                                                                 | `Bun.Image` decodes/encodes, but takes **encoded** input only (raw RGBA in/out is an open PR)                       | third-party                                                                                      |
-| **NativeScript** | `navigator.gpu`                                                       | Metal / Vulkan | `canvas.getContext("webgpu")` — browser-shaped                                                                                       | asset images, to verify                                                                                             | `@nativescript/canvas` 2.0 webgpu prerelease                                                     |
+| Runtime          | How you get a `GPU`                                                   | Backend        | Canvas / surface                                                                                                                     | Image APIs                                                                                                          | Status                                                                                                   |
+| ---------------- | --------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Node**         | `import { create } from 'webgpu'` → `create([...options])`            | Dawn           | none                                                                                                                                 | none (no `ImageBitmap`, no `copyExternalImageToTexture` sources)                                                    | npm `webgpu` 0.6.x, Node ≥ 18                                                                            |
+| **Deno**         | `navigator.gpu` (with `--unstable-webgpu` / `"unstable": ["webgpu"]`) | wgpu           | `Deno.UnsafeWindowSurface` (`getContext("webgpu")`, explicit `present()`, `resize()`); desktop windows from Deno 2.9 `BrowserWindow` | `createImageBitmap(Blob \| ImageData \| ImageBitmap)`; formats + `copyExternalImageToTexture` support **to verify** | unstable flag. **Runtime discontinued** ([announcement](https://deno.com/blog/cloudflare)); not a target |
+| **Bun (future)** | `navigator.gpu` + `GPU*` globals, no flag                             | wgpu-core 30   | **none** ("there is no canvas")                                                                                                      | `GPUExternalTexture` / `copyExternalImageToTexture` explicitly out of scope                                         | PR [oven-sh/bun#42768](https://github.com/oven-sh/bun/pull/42768) open, being split into a stack         |
+| **Bun (today)**  | `bun-webgpu` (Dawn via FFI) or `wgpu-polyfill` (wgpu-native)          | Dawn / wgpu    | none                                                                                                                                 | `Bun.Image` decodes/encodes, but takes **encoded** input only (raw RGBA in/out is an open PR)                       | third-party                                                                                              |
+| **NativeScript** | `navigator.gpu`                                                       | Metal / Vulkan | `canvas.getContext("webgpu")` — browser-shaped                                                                                       | asset images, to verify                                                                                             | `@nativescript/canvas` 2.0 webgpu prerelease                                                             |
 
 Takeaways:
 
@@ -80,6 +80,13 @@ Takeaways:
   explicit freeing (`Painter.destroy()` and per-resource `destroy()`) is
   deferred to long-running hosts, see
   [independent-todos.md](independent-todos.md) "GPU resources".
+- **Verification runs on node-webgpu only.** Deno's runtime is being
+  discontinued ([announcement](https://deno.com/blog/cloudflare)). Even if a
+  foundation continues it, its experimental native WebGPU and window APIs may
+  not survive, so this plan no longer bets on it. Bun's native WebGPU is still
+  an open PR. node-webgpu is a Node-API addon: on Node it is the reference, and
+  on Bun it may load too (to verify, §7). Otherwise drivers run on plain Node.
+  The design itself stays runtime-agnostic: the `GPU` object is passed in.
 - **Deno windows and NativeScript are on-screen hosts** — a real surface with
   `getContext("webgpu")`, closer to the browser than to headless. Out of scope
   here; tracked in [non-browser-hosts-plan.md](non-browser-hosts-plan.md). The
@@ -151,9 +158,8 @@ Encoding is the host's job (design rule above). What the host has available:
 
 - **PNG:** `pngjs` (pure JS, the node-webgpu example's choice) or `sharp`
   (`sharp(data, { raw: { width, height, channels: 4 } }).png()`, also 16-bit).
-  Both run on Node, Bun and Deno (npm compat). `Bun.Image` only accepts encoded
-  input today (raw RGBA in/out is an open PR), so it can't take readback pixels
-  directly yet.
+  Both run on Node and Bun. `Bun.Image` only accepts encoded input today (raw
+  RGBA in/out is an open PR), so it can't take readback pixels directly yet.
 - **Float16 / mip-chain assets:** **KTX2** (uncompressed) is the standard GPU
   texture container — any `GPUTextureFormat`, mip levels. `ktx-parse` (npm)
   reads and writes it in every runtime and in the browser. Raw `.bin` + known
@@ -161,9 +167,9 @@ Encoding is the host's job (design rule above). What the host has available:
 - **Video / GIF:** `ffmpeg` as a subprocess, raw frames on stdin
   (`-f rawvideo -pix_fmt rgba -s WxH -r FPS -i -`). For 16-bit output use
   `rgba64le` (integer, so the host quantizes float frames first), or
-  `gbrapf32le` for float input. Spawned via `node:child_process` (Node, Bun,
-  Deno), `Bun.spawn` or `Deno.Command`. GIF via
-  `split[a][b];[a]palettegen[p];[b][p]paletteuse` in one pass.
+  `gbrapf32le` for float input. Spawned via `node:child_process` (Node, Bun) or
+  `Bun.spawn`. GIF via `split[a][b];[a]palettegen[p];[b][p]paletteuse` in one
+  pass.
 - A Scala-side codec layer (a small PNG encoder over `CompressionStream`, which
   every runtime has) stays possible later; not planned.
 
@@ -318,9 +324,9 @@ WebGPU
 ```
 
 Where `gpu` comes from — `create([...])` from npm `webgpu` in a TS driver,
-`navigator.gpu` read by user code in Deno/Bun, a Scala `@JSImport` in the user's
-own entry file — is user land in every case. The browser gets the extended path
-too, e.g.
+`navigator.gpu` read by user code in a runtime with native WebGPU, a Scala
+`@JSImport` in the user's own entry file — is user land in every case. The
+browser gets the extended path too, e.g.
 `Painter.create(CanvasSurface(canvas), dom.window.navigator.gpu, powerPreference = PowerPreference.HighPerformance)`,
 where the `navigator` read is again the caller's.
 
@@ -334,15 +340,19 @@ and `surface: Surface` (the internal `CaptureSurface` when given a
 Two layers, because selection splits across the `GPU` boundary (§1.2):
 
 **Runtime level — in the driver, before `GPU` exists.** The driver script maps
-two generic flags to the runtime's mechanism, so one command line means the same
-thing everywhere:
+generic flags to node-webgpu's mechanism (on Node, or on Bun if it loads the
+addon):
 
-| Flag                 | node-webgpu                                                             | Deno                                      | Bun (when native) |
-| -------------------- | ----------------------------------------------------------------------- | ----------------------------------------- | ----------------- |
-| `--backend vulkan`   | `create(["backend=vulkan"])`                                            | `DENO_WEBGPU_BACKEND=vulkan`              | to verify         |
-| `--adapter <name>`   | `create(["adapter=<name>"])`                                            | via `requireAdapter` (below) + Vulkan env | same as Deno      |
-| `--software`         | `forceFallbackAdapter = true`                                           | `forceFallbackAdapter = true`             | same              |
-| `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json` for all runtimes (set before spawn) |                                           |                   |
+| Flag                 | node-webgpu                                           |
+| -------------------- | ----------------------------------------------------- |
+| `--backend vulkan`   | `create(["backend=vulkan"])`                          |
+| `--adapter <name>`   | `create(["adapter=<name>"])`                          |
+| `--software`         | `forceFallbackAdapter = true`                         |
+| `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json`, set before spawn |
+
+A runtime with its own WebGPU (Bun's native one, if it lands) maps the same
+flags to its own mechanism. The flags are the driver's contract, not the
+painter's.
 
 Env vars must be set before the runtime initializes its GPU instance, so the
 driver either documents them or re-spawns itself with them set.
@@ -356,11 +366,10 @@ offline drivers, off in the browser.
 
 A `list-adapters` driver mode: on Node it calls `create(["adapter=?"])` and
 relays Dawn's `Available adapters` list (backend + exact name to pass to
-`--adapter`); on every runtime it also prints `info` for default,
-`high-performance`, `low-power` and fallback requests. That is as close to
-enumeration as the spec allows. On Node `--adapter` is exact (Dawn picks by
-name); on Deno/Bun it is a `requireAdapter` check after the fact, so steering
-there is `--backend` + the Vulkan env vars.
+`--adapter`). It also prints `info` for default, `high-performance`, `low-power`
+and fallback requests. That is as close to enumeration as the spec allows. With
+node-webgpu `--adapter` is exact (Dawn picks by name). On a runtime without a
+name option it would be a `requireAdapter` check after the fact.
 
 ### 3.4 `show` — one present algorithm for every target
 
@@ -691,17 +700,9 @@ process.exit(0) // Dawn keeps the event loop alive while the GPU is referenced
 ```
 
 ```ts
-// deno:  DENO_WEBGPU_BACKEND=vulkan deno run --unstable-webgpu -A render.deno.ts
-import { render } from './render.js'
-const out = { width: 1920, height: 1080, format: 'rgba8unorm', frames: [] }
-await render(navigator.gpu, out)
-// … encode …
-Deno.exit(0)
-```
-
-```ts
-// bun, once native WebGPU ships: identical to the Deno driver.
-// today: bun-webgpu / wgpu-polyfill provide the GPU object (API to verify).
+// bun:  bun render.node.ts --backend vulkan
+// The same driver, if Bun loads node-webgpu's Node-API addon (to verify, §7).
+// If Bun's native WebGPU lands: render(navigator.gpu, out) instead.
 ```
 
 Doing it all in Scala instead (create the container in Scala, encode via an npm
@@ -709,8 +710,8 @@ package through `@JSImport`) is equally valid — the boundary does not force th
 split, it only makes the TS split cheap.
 
 The consuming repo grows a
-`scripts/render.ts <path> [--runtime node|deno|bun] [--backend …] [--adapter …]`
-that builds the offline entry with scala-cli and spawns the chosen runtime — a
+`scripts/render.ts <path> [--runtime node|bun] [--backend …] [--adapter …]` that
+builds the offline entry with scala-cli and spawns the chosen runtime — a
 consumer-side plan, not trivalibs.
 
 **Entry-point signature.** Browser sketches keep
@@ -761,7 +762,7 @@ whatever the user prefers. The intended default is a short host script (§1.4 fo
 the tooling); trivalibs ships no codec or file layer in this plan.
 
 ```ts
-// PNG still, Node/Bun/Deno — pngjs. The PNG's own buffer is the target, so
+// PNG still, Node/Bun — pngjs. The PNG's own buffer is the target, so
 // nothing is copied: the painter writes straight into png.data.
 import { PNG } from 'pngjs'
 import { writeFileSync } from 'node:fs'
@@ -890,11 +891,10 @@ interface PixelFrames {
 }
 ```
 
-Web Streams exist in browsers, Node, Deno and Bun with built-in backpressure,
-and every host can put one in front of ffmpeg's stdin
-(`Writable.toWeb(proc.stdin)` on Node, `Deno.Command` stdin natively, a
-three-line `WritableStream` over `Bun.spawn`'s sink). A host wanting to pull
-instead uses a `TransformStream` and reads its readable side.
+Web Streams exist in browsers, Node and Bun with built-in backpressure, and
+every host can put one in front of ffmpeg's stdin (`Writable.toWeb(proc.stdin)`
+on Node, a three-line `WritableStream` over `Bun.spawn`'s sink). A host wanting
+to pull instead uses a `TransformStream` and reads its readable side.
 
 **No new wait API.** With a sink, a frame has "landed" once it is written to the
 stream, so `awaitReadback()` (§3.4) also resolves only once the writer is ready
@@ -927,7 +927,9 @@ Deferred only because nothing needs it yet. The first long render that does adds
 
 Not implemented here, but the `Surface` trait must admit them with at most one
 **additive** change (frame scheduling, below) — anything beyond that means this
-design was wrong:
+design was wrong. Deno's window API is now uncertain (§1.1), but its constraints
+stay as a check. They are the general shape of a native-window surface, and
+NativeScript or a successor host may share them:
 
 - **Explicit present** (Deno `UnsafeWindowSurface.present()`) — covered by
   `present(encoder)`, called once per `show`.
@@ -1366,10 +1368,12 @@ Each step lands independently and leaves `examples/` and the sketches working.
   internal `read`. Then `p.awaitReadback()`.
 - Adapter control: `requireAdapter`, `WebGPU.adapterNamed`, `logAdapter`, and
   `adapterInfo` on the painter.
-- _Proof:_ `examples/headless-triangle/` with Node and Deno drivers, including
+- _Proof:_ `examples/headless-triangle/` with a node-webgpu driver, including
   the `--backend` / `--adapter` / `--software` flags and the `list-adapters`
-  mode. The TS driver writes a PNG from a `PixelImage` target (`rgba8unorm`),
-  and a 16-bit output (`rgba16float`).
+  mode. It runs on Node, and the same driver is tried on Bun; if Bun can't load
+  the addon, Node alone is the target. The TS driver writes a PNG from a
+  `PixelImage` target (`rgba8unorm`), and a 16-bit output (`rgba16float`). All
+  later headless proofs (M1.2, M1.2b, M1.3, M2) use the same setup.
 
 **M1.2 — motion sequences (§3.7, §3.8).**
 
@@ -1486,9 +1490,9 @@ Contents:
   `WebGPU.requestAdapter` / `requestDevice` split, and what the painter owns.
   Feature-dependent setups, first of all `rgba32float` output, which needs
   `requiredFeatures = Arr("float32-filterable")`.
-- **Getting a `GPU` per runtime.** Node (`webgpu` `create([...])`), Deno
-  (`navigator.gpu`, `--unstable-webgpu`), Bun, and the browser, with driver
-  scripts in TS and the Scala-only variant.
+- **Getting a `GPU` per runtime.** Node (`webgpu` `create([...])`), Bun (the
+  same, if verified), and the browser, with driver scripts in TS and the
+  Scala-only variant.
 - **Adapter selection workflows.** A worked guide built from §1.2 / §3.3.
   Listing adapters, then picking by backend, by name, or by software fallback.
   The Linux layer below WebGPU (`VK_DRIVER_FILES`, `MESA_VK_DEVICE_SELECT`,
@@ -1499,8 +1503,8 @@ Contents:
   the `awaitReadback()` semantics, the memory limits of the simple container,
   and host-side processing recipes (PNG, ffmpeg mp4 / gif, `ImageData` in the
   browser).
-- **Process lifecycle.** `process.exit` / `Deno.exit` after rendering, and a
-  pointer to the deferred `destroy()` for long-running processes.
+- **Process lifecycle.** `process.exit` after rendering, and a pointer to the
+  deferred `destroy()` for long-running processes.
 
 Native-window surfaces are not a phase of this plan — see
 [non-browser-hosts-plan.md](non-browser-hosts-plan.md).
@@ -1512,19 +1516,17 @@ scripts and are run, not deployed.
 
 ## 7. To verify at implementation time
 
-- Deno: does `copyExternalImageToTexture` exist, and which formats does
-  `createImageBitmap` decode? (Doesn't block anything — the `PixelImage` path is
-  universal — but decides whether Deno can use `WebImages`.)
-- Deno: current WebGPU flag requirement in the version in use; whether
-  `navigator.gpu` needs `--unstable-webgpu` for headless scripts.
+- **Bun + node-webgpu:** does Bun load the `webgpu` Node-API addon, and do
+  `create()`, `mapAsync` and process exit behave as on Node? This decides
+  whether the drivers also run on Bun, or on Node only.
 - Bun native WebGPU: merge status of the PR stack, backend env var, whether
-  `GPUAdapterInfo` is populated.
-- `bun-webgpu` / `wgpu-polyfill`: how each exposes the `GPU` object.
-- `Float16Array` in Deno (V8 ≥ 13.5, so expected in Deno ≥ 2.3; not installed
-  here). Node 24.16 and Bun 1.4.2 are checked.
-- `rgba32float` capture and readback on all three backends.
+  `GPUAdapterInfo` is populated. Only relevant once it lands.
+- `Float16Array`: Node 24.16 and Bun 1.4.2 are checked.
+- `rgba32float` capture and readback on node-webgpu's backends (Vulkan, and the
+  software fallback).
 - `rgba16float` readback: `copyTextureToBuffer` of `rgba16float` with 8-byte
-  texels and 256-byte row alignment on all three backends.
+  texels and 256-byte row alignment on node-webgpu (Vulkan and the software
+  fallback).
 - A non-native JS trait (`trait PixelFrames extends js.Object`) accepts a plain
   TS object literal at the call boundary without wrapping — confirm
   `frames.push` from Scala is visible to the TS caller (it should be: same array

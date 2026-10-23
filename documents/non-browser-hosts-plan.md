@@ -1,6 +1,9 @@
 # Native-window hosts — Deno windows, NativeScript
 
 **Status: planned, not scheduled.** A separate issue from offline rendering.
+**Deno is being discontinued** ([announcement](https://deno.com/blog/cloudflare)),
+so the Deno-window phase below is on hold: its experimental WebGPU window API
+may not survive a hand-over. Its constraints still shape the `Surface` trait.
 
 **Depends on**
 [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md),
