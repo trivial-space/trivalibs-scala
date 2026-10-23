@@ -1,8 +1,9 @@
 # Headless painter, render-to-file, and texture sources
 
-**Status: M1.0, M1.0b and M1.1 implemented (browser check of the examples pending); rest planned. §1–3 (Milestone 1) reviewed and approved; §4
-onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**,
-not on-screen rendering outside the browser. Takes over the host seam and the
+**Status: M1.0, M1.0b and M1.1 implemented (browser check of the examples
+pending); rest planned. §1–3 (Milestone 1) reviewed and approved; §4 onward
+(Milestone 2) not yet reviewed.** Scope is **offline render to file**, not
+on-screen rendering outside the browser. Takes over the host seam and the
 headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
 `RenderHost` becomes `Surface` here); native-window hosts (Deno windows,
 NativeScript) stay a separate issue in that document, and §3.11 lists what this
@@ -74,12 +75,11 @@ Takeaways:
   painter's capture surface is this, packaged.
 - node-webgpu keeps the process alive while the `GPU` object returned by
   `create()` is referenced (**to verify, M1.3**). For render-and-exit scripts
-  the driver ends with
-  `process.exit(0)` (`Deno.exit(0)`) once the render promise — file writes and
-  encoder subprocesses included — has resolved; the OS and driver reclaim all
-  GPU memory at process end. No library teardown needed for this milestone;
-  explicit freeing (`Painter.destroy()` and per-resource `destroy()`) is
-  deferred to long-running hosts, see
+  the driver ends with `process.exit(0)` (`Deno.exit(0)`) once the render
+  promise — file writes and encoder subprocesses included — has resolved; the OS
+  and driver reclaim all GPU memory at process end. No library teardown needed
+  for this milestone; explicit freeing (`Painter.destroy()` and per-resource
+  `destroy()`) is deferred to long-running hosts, see
   [independent-todos.md](independent-todos.md) "GPU resources".
 - **Verification runs on node-webgpu only.** Deno's runtime is being
   discontinued ([announcement](https://deno.com/blog/cloudflare)). Even if a
@@ -230,8 +230,7 @@ trait Surface:
 
 `present` takes the frame's encoder so a capture surface can append its
 `copyTextureToBuffer` to the same submission as the blit. It also submits,
-because the capture has to submit before it can `mapAsync` the staging
-buffer.
+because the capture has to submit before it can `mapAsync` the staging buffer.
 
 Frame scheduling is **not** on the trait: offline renders are driven by a user
 loop with a fixed `tpf` (§3.7), and the browser keeps `animate` as is.
@@ -253,14 +252,14 @@ does not change. It is the only place that calls
 `gpu.getPreferredCanvasFormat()` and `ResizeObserver`.
 `CanvasSurface(canvas, format = …)` takes an optional format. Without one it
 uses the browser's preferred canvas format, read from `navigator.gpu`, with
-`bgra8unorm` as the fallback. That read is browser-only and takes only a
-format, not the GPU. As implemented it takes an `HTMLCanvasElement` only.
+`bgra8unorm` as the fallback. That read is browser-only and takes only a format,
+not the GPU. As implemented it takes an `HTMLCanvasElement` only.
 `OffscreenCanvas` has no client size and no `ResizeObserver`, so it would need
 its own sizing; that is added once something needs it.
 
 One small difference: `onResize` callbacks now receive the integer canvas size.
-Before, they got the observer's fractional CSS size, while the canvas itself
-was already integer-sized.
+Before, they got the observer's fractional CSS size, while the canvas itself was
+already integer-sized.
 
 **No auto-detection** (reasoning carried over from the host-seam design in
 [non-browser-hosts-plan.md](non-browser-hosts-plan.md)): a detecting
@@ -346,8 +345,8 @@ where the `navigator` read is again the caller's.
 and `surface: Surface` (the internal `CaptureSurface` when given a
 `PixelTarget`). `width` / `height` / `onResize` delegate to the surface;
 `canvas` / `context` leave the constructor. `p.canvas` stays as an accessor,
-since the guides attach DOM listeners to it, and it throws on a painter
-without a `CanvasSurface`. `p.context` is gone; nothing used it.
+since the guides attach DOM listeners to it, and it throws on a painter without
+a `CanvasSurface`. `p.context` is gone; nothing used it.
 
 ### 3.3 Adapter control, offline
 
@@ -357,12 +356,12 @@ Two layers, because selection splits across the `GPU` boundary (§1.2):
 generic flags to node-webgpu's mechanism (on Node, or on Bun if it loads the
 addon):
 
-| Flag                 | node-webgpu                                           |
-| -------------------- | ----------------------------------------------------- |
-| `--backend vulkan`   | `create(["backend=vulkan"])`                          |
-| `--adapter <name>`   | `create(["adapter=<name>"])`                          |
+| Flag                 | node-webgpu                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--backend vulkan`   | `create(["backend=vulkan"])`                                                                                     |
+| `--adapter <name>`   | `create(["adapter=<name>"])`                                                                                     |
 | `--software`         | `forceFallbackAdapter = true` (no adapter in node-webgpu 0.6.2 on Linux; use `--adapter` with the llvmpipe name) |
-| `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json`, set before spawn |
+| `--vk-driver nvidia` | `VK_DRIVER_FILES=…/nvidia_icd.json`, set before spawn                                                            |
 
 A runtime with its own WebGPU (Bun's native one, if it lands) maps the same
 flags to its own mechanism. The flags are the driver's contract, not the
@@ -1407,13 +1406,14 @@ Each step lands independently and leaves `examples/` and the sketches working.
 - munit GPU integration tests. `scala-cli test` already runs on Node, so with
   `webgpu` installed a test can render and read back (lavapipe in CI).
 - Verify the process lifecycle claimed in §1.1:
-  - whether node-webgpu keeps the process alive while the `GPU` is
-    referenced, so that a driver must end with `process.exit(0)`;
+  - whether node-webgpu keeps the process alive while the `GPU` is referenced,
+    so that a driver must end with `process.exit(0)`;
   - whether exiting right after the last readback is safe, with GPU memory
     reclaimed and no driver errors;
   - the same on Bun, if the drivers run there.
 
   Only verified behavior goes into the setup guide (§6.1).
+
 - _Proof:_ pixel assertions on a known render, and a recorded lifecycle result
   per runtime.
 
@@ -1526,8 +1526,8 @@ Contents:
   the `awaitReadback()` semantics, the memory limits of the simple container,
   and host-side processing recipes (PNG, ffmpeg mp4 / gif, `ImageData` in the
   browser).
-- **Process lifecycle.** Only what M1.3 verified: whether and when a driver
-  must call `process.exit`, and a pointer to the deferred `destroy()` for
+- **Process lifecycle.** Only what M1.3 verified: whether and when a driver must
+  call `process.exit`, and a pointer to the deferred `destroy()` for
   long-running processes.
 
 Native-window surfaces are not a phase of this plan — see
@@ -1541,16 +1541,16 @@ scripts and are run, not deployed.
 ## 7. To verify at implementation time
 
 - ✅ **Bun + node-webgpu** (checked in M1.1, webgpu 0.6.2, Bun 1.4.2, Node
-  24.16): Bun loads the addon. `create()`, `mapAsync`, and the
-  `rgba8unorm` / `rgba16float` / `rgba32float` readbacks give identical
-  results on both runtimes. So the drivers run on Node and Bun.
+  24.16): Bun loads the addon. `create()`, `mapAsync`, and the `rgba8unorm` /
+  `rgba16float` / `rgba32float` readbacks give identical results on both
+  runtimes. So the drivers run on Node and Bun.
 - **Process exit** (observed in M1.1, verified in M1.3): the headless example
-  exits on its own on Node and Bun, without `process.exit`. That contradicts
-  the §1.1 claim.
-- **Software adapter** (observed in M1.1): `forceFallbackAdapter: true`
-  returned no adapter, or on a reused `GPU` the hardware one. Dawn in node-webgpu
-  0.6.2 on Linux ships no SwiftShader. Mesa's llvmpipe is listed as a Vulkan
-  adapter and renders identically when picked by name (`--adapter`).
+  exits on its own on Node and Bun, without `process.exit`. That contradicts the
+  §1.1 claim.
+- **Software adapter** (observed in M1.1): `forceFallbackAdapter: true` returned
+  no adapter, or on a reused `GPU` the hardware one. Dawn in node-webgpu 0.6.2
+  on Linux ships no SwiftShader. Mesa's llvmpipe is listed as a Vulkan adapter
+  and renders identically when picked by name (`--adapter`).
 - Bun native WebGPU: merge status of the PR stack, backend env var, whether
   `GPUAdapterInfo` is populated. Only relevant once it lands.
 - `Float16Array`: Node 24.16 and Bun 1.4.2 are checked.
@@ -1592,8 +1592,8 @@ scripts and are run, not deployed.
 
 ### 2026-10-24 — M1.0, M1.0b, M1.1
 
-Implemented together, in one change, because M1.1's readback is built on
-M1.0b's `blitInto`. Not committed yet.
+Implemented together, in one change, because M1.1's readback is built on M1.0b's
+`blitInto`. Not committed yet.
 
 **Landed:**
 
@@ -1614,8 +1614,8 @@ M1.0b's `blitInto`. Not committed yet.
   `adapterNamed` / `describe`.
 - `examples/headless_triangle/`: `HeadlessTriangle.scala`, `pixels.d.ts`, and
   `render.node.ts`.
-- `package.json`: the dev dependency `webgpu` 0.6.2. `.gitignore`: the
-  example's `out/`.
+- `package.json`: the dev dependency `webgpu` 0.6.2. `.gitignore`: the example's
+  `out/`.
 
 **Verified:**
 
@@ -1641,22 +1641,21 @@ M1.0b's `blitInto`. Not committed yet.
   - all 19 examples load with no console errors;
   - every deterministic example is pixel-identical (blur, deferred, mipmaps,
     panel\_\*, painter\_\*, sdf_trace, noise_tests, simple_triangle);
-  - the animated and random ones differ even baseline against baseline, so
-    they are inconclusive;
-  - `noise_cpu_gpu` sometimes stays blank in headless Chromium, in both
-    builds.
+  - the animated and random ones differ even baseline against baseline, so they
+    are inconclusive;
+  - `noise_cpu_gpu` sometimes stays blank in headless Chromium, in both builds.
 - **Not exercised:** the `rgba32float` fail-fast without the feature. The test
   GPU supports `float32-filterable`, and the example requests it.
 
 **Deviations from the plan** (§3 updated where marked):
 
-1. **`Surface.present` submits.** It finishes and submits the frame's
-   encoder; `CanvasSurface.present` is just the submit. The capture has to
-   submit before `mapAsync`, so the surface owns the end of the frame. (§3.1)
+1. **`Surface.present` submits.** It finishes and submits the frame's encoder;
+   `CanvasSurface.present` is just the submit. The capture has to submit before
+   `mapAsync`, so the surface owns the end of the frame. (§3.1)
 2. **`Painter.init` doesn't call the union-typed `create`.** Both go through a
    private `setup(surface, gpu)` and `build(surface, device)`, so a browser
-   bundle never links `CaptureSurface`. The plan described `init` as sugar
-   over `create`; the behavior is the same.
+   bundle never links `CaptureSurface`. The plan described `init` as sugar over
+   `create`; the behavior is the same.
 3. **`CanvasSurface`** has a private constructor and
    `CanvasSurface(canvas, format = …)`. A constructor parameter named `format`
    would clash with the `format` member. (§3.1)
@@ -1664,11 +1663,11 @@ M1.0b's `blitInto`. Not committed yet.
      `bgra8unorm` when that is missing.
    - It takes an `HTMLCanvasElement` only, not
      `HTMLCanvasElement | OffscreenCanvas`.
-4. **`p.canvas` stays as an accessor**, since the guides attach DOM listeners
-   to it. It throws on a painter without a `CanvasSurface`. `p.context` is
-   removed. (§3.2)
-5. **`onResize` fires with the integer canvas size.** Before, it fired with
-   the observer's fractional CSS size. (§3.1)
+4. **`p.canvas` stays as an accessor**, since the guides attach DOM listeners to
+   it. It throws on a painter without a `CanvasSurface`. `p.context` is removed.
+   (§3.2)
+5. **`onResize` fires with the integer canvas size.** Before, it fired with the
+   observer's fractional CSS size. (§3.1)
 6. **The `Painter` constructor is `private[painter] (device, surface)`.**
    `queue` and `preferredFormat` are now derived vals.
 7. **The phasing was collapsed.** M1.0's "Surface targets only" didn't happen:
@@ -1706,8 +1705,8 @@ M1.0b's `blitInto`. Not committed yet.
     - `pixels.d.ts` lives in the example folder.
 14. **Facade scope.** Not added: `OffscreenCanvas` and `VideoFrame` (M2),
     `importExternalTexture`, and `requestVideoFrameCallback` (later).
-    `writeTexture`, `copyExternalImageToTexture` and `copyTextureToTexture`
-    are added now, unused until M2.
+    `writeTexture`, `copyExternalImageToTexture` and `copyTextureToTexture` are
+    added now, unused until M2.
 
 **Findings:**
 
@@ -1719,11 +1718,11 @@ M1.0b's `blitInto`. Not committed yet.
 - `forceFallbackAdapter: true` gives no adapter in node-webgpu 0.6.2 on Linux,
   since that build ships no SwiftShader. The software path is llvmpipe, picked
   by name (§3.3, §7).
-- **Library trap:** `.get(x)` on a `js.Dynamic` resolves to trivalibs'
-  `Opt.get` extension, because every value is an `Opt[A]`. It then calls the
-  result as a function: `(0, this.l1)(target) is not a function`. The fix is a
-  typed facade (`WeakIntMap`). This is a candidate for the "known traps" list
-  in `CLAUDE.md`.
+- **Library trap:** `.get(x)` on a `js.Dynamic` resolves to trivalibs' `Opt.get`
+  extension, because every value is an `Opt[A]`. It then calls the result as a
+  function: `(0, this.l1)(target) is not a function`. It is worked around here
+  with a typed facade (`WeakIntMap`). The fix at the cause is planned in
+  [opt-maybe-extension-shadowing-plan.md](opt-maybe-extension-shadowing-plan.md).
 - Shade creation logs every generated WGSL to the console (`log(wgsl)`, which
   predates this change). That is noisy in offline driver output. Leave it, or
   gate it, later.
