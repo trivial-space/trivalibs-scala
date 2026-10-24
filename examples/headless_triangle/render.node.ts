@@ -11,15 +11,15 @@
 //   --require <text>   reject the adapter unless its info contains <text>
 //   --list-adapters    print what each adapter request returns, then stop
 //
-// Writes to examples/headless_triangle/out/:
-//   triangle.png      rgba8unorm PixelImage → 8-bit PNG
-//   triangle-16.png   rgba16float PixelImage, intensity 4 (HDR) → 16-bit PNG,
-//                     clamped to [0, 1]
+// Writes to examples/headless_triangle/assets/:
+//   pre-rendered-triangle.png      rgba8unorm PixelImage → 8-bit PNG
+//   pre-rendered-triangle-16.png   rgba16float PixelImage, intensity 4 (HDR)
+//                                  → 16-bit PNG, clamped to [0, 1]
 // and checks a 3-frame PixelFrames sequence.
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { deflateSync } from 'node:zlib'
 import { create } from 'webgpu'
+import { encodePng } from '../example_helpers/png.ts'
 import { render } from '../out/headless_triangle.js'
 import type { PixelFrames, PixelImage } from './pixels.d.ts'
 
@@ -64,7 +64,7 @@ if (flag('--list-adapters')) {
 } else {
   const gpu = create(dawnOptions)
   const size = 256
-  const outDir = 'examples/headless_triangle/out'
+  const outDir = 'examples/headless_triangle/assets'
   mkdirSync(outDir, { recursive: true })
 
   const img8: PixelImage = {
@@ -74,7 +74,7 @@ if (flag('--list-adapters')) {
     data: new Uint8Array(size * size * 4),
   }
   await render(gpu, img8, 1, 1, software, requireName)
-  writeFileSync(`${outDir}/triangle.png`, encodePng(size, size, img8.data, 8))
+  writeFileSync(`${outDir}/pre-rendered-triangle.png`, encodePng(size, size, img8.data, 8))
 
   const img16: PixelImage = {
     width: size,
@@ -86,7 +86,7 @@ if (flag('--list-adapters')) {
   let max = 0
   for (const v of img16.data) if (v > max) max = v
   console.log(`rgba16float max channel: ${max} (> 1 survives the readback)`)
-  writeFileSync(`${outDir}/triangle-16.png`, encodePng(size, size, img16.data, 16))
+  writeFileSync(`${outDir}/pre-rendered-triangle-16.png`, encodePng(size, size, img16.data, 16))
 
   const seq: PixelFrames = { width: size, height: size, format: 'rgba8unorm', frames: [] }
   await render(gpu, seq, 3, 1, software, requireName)
@@ -95,69 +95,6 @@ if (flag('--list-adapters')) {
     `PixelFrames: ${seq.frames.length} frames, center red per frame:`,
     seq.frames.map((f) => center(f as Uint8Array)).join(', '),
   )
-  console.log(`wrote ${outDir}/triangle.png and triangle-16.png`)
+  console.log(`wrote ${outDir}/pre-rendered-triangle.png and pre-rendered-triangle-16.png`)
 }
 
-// ---- minimal PNG encoder: RGBA, 8 or 16 bit, no filtering ----
-
-function encodePng(w: number, h: number, data: ArrayLike<number>, depth: 8 | 16): Uint8Array {
-  const bpc = depth / 8
-  const stride = w * 4 * bpc + 1
-  const raw = new Uint8Array(stride * h)
-  for (let y = 0; y < h; y++) {
-    for (let i = 0; i < w * 4; i++) {
-      const v = data[y * w * 4 + i]
-      const o = y * stride + 1 + i * bpc
-      if (depth === 8) raw[o] = v
-      else {
-        const q = Math.round(Math.min(1, Math.max(0, v)) * 65535)
-        raw[o] = q >> 8
-        raw[o + 1] = q & 255
-      }
-    }
-  }
-  const ihdr = new Uint8Array(13)
-  const dv = new DataView(ihdr.buffer)
-  dv.setUint32(0, w)
-  dv.setUint32(4, h)
-  ihdr.set([depth, 6, 0, 0, 0], 8)
-  return concat([
-    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(raw)),
-    chunk('IEND', new Uint8Array(0)),
-  ])
-}
-
-function chunk(type: string, body: Uint8Array): Uint8Array {
-  const out = new Uint8Array(12 + body.length)
-  const dv = new DataView(out.buffer)
-  dv.setUint32(0, body.length)
-  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i)
-  out.set(body, 8)
-  dv.setUint32(8 + body.length, crc32(out.subarray(4, 8 + body.length)))
-  return out
-}
-
-// A function, not a const: the top-level awaits above run before any const
-// declared down here is initialized.
-function crc32(bytes: Uint8Array): number {
-  const table = Array.from({ length: 256 }, (_, n) => {
-    let c = n
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
-    return c >>> 0
-  })
-  let c = 0xffffffff
-  for (const b of bytes) c = table[(c ^ b) & 255] ^ (c >>> 8)
-  return (c ^ 0xffffffff) >>> 0
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let o = 0
-  for (const p of parts) {
-    out.set(p, o)
-    o += p.length
-  }
-  return out
-}

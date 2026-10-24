@@ -1464,6 +1464,10 @@ shipped API.
 - `WebImages.load`.
 - _Proof:_ a browser example with a loaded image panel, and an offline driver
   that decodes a PNG it wrote (sharp) and feeds it back in as a `PixelImage`.
+- _Proof, roundtrip:_ `headless_triangle` grows into the full §4.5 workflow. Its
+  committed `assets/pre-rendered-triangle.png` is loaded by a second Scala
+  entry and an `index.html` in the same folder, with `WebImages.load`, and drawn
+  as a sprite texture. `build-dist.ts` already copies an example's `assets/`.
 
 **M2.2 — offline video input (§4.4).**
 
@@ -1698,9 +1702,15 @@ Implemented together, in one change, because M1.1's readback is built on M1.0b's
 13. **Example details:**
     - the render function is
       `render(gpu, out, frameCount, intensity, software, requireName)`;
-    - the driver has a small PNG encoder (8 and 16 bit) over `node:zlib`, in
-      place of pngjs, so `webgpu` is the only dependency;
+    - the driver uses a small PNG encoder (8 and 16 bit) over `node:zlib`, in
+      place of pngjs, so `webgpu` is the only dependency. It lives in
+      `examples/example_helpers/png.ts`, so the driver shows only library
+      usage;
     - the 16-bit output is a PNG clamped to `[0,1]`;
+    - the PNGs go to the example's committed `assets/`
+      (`pre-rendered-triangle.png`, `pre-rendered-triangle-16.png`), the
+      examples' convention for runtime-loaded files, ready for the M2.1
+      roundtrip. That replaces the gitignored `out/` of the first version;
     - one driver, `render.node.ts`, serves Node and Bun;
     - `pixels.d.ts` lives in the example folder.
 14. **Facade scope.** Not added: `OffscreenCanvas` and `VideoFrame` (M2),

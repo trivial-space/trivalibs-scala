@@ -8,7 +8,8 @@ import { join } from "node:path"
 // and `main.js` shim) and `examples/out/` holds the shared scala-cli bundle —
 // every example's `main.js` imports `../out/<name>.js`, so that relative
 // layout has to survive into `dist/`. This copies exactly the files a browser
-// needs and drops the Scala sources.
+// needs — `index.html`, `main.js` and an optional `assets/` folder of files the
+// example loads at runtime — and drops the Scala sources.
 //
 // Run `bun run examples:build` first; this script does not compile.
 
@@ -42,6 +43,9 @@ for (const entry of readdirSync(examplesDir)) {
 	await cp(html, join(distDir, entry, "index.html"))
 	const mainJs = join(dir, "main.js")
 	if (await exists(mainJs)) await cp(mainJs, join(distDir, entry, "main.js"))
+	const assets = join(dir, "assets")
+	if (statSync(assets, { throwIfNoEntry: false })?.isDirectory())
+		await cp(assets, join(distDir, entry, "assets"), { recursive: true })
 	copied.push(entry)
 }
 

@@ -119,7 +119,12 @@ with minimal low-level overhead.
   interactive DOM layer that integrates with and drives the graphics layers.
 - `examples/` — one example per feature, each with `index.html` + `main.js` +
   `*.scala`. Compiled JS lands in `examples/out/`. Examples double as
-  idiomatic-usage docs and ship with the library.
+  idiomatic-usage docs and ship with the library. Files an example loads at
+  runtime (images, data) go in its own `assets/` folder, committed and copied
+  into `dist/` by `build-dist.ts`; headless drivers write their output there.
+- `examples/example_helpers/` — JS/TS and Scala utils shared between examples
+  that are not library usage (e.g. `png.ts` for the headless drivers), kept out
+  so each example shows only the library. No `index.html`, so not an example.
 
 ### Critical Type-Level Patterns
 
