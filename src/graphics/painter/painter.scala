@@ -93,6 +93,10 @@ fn fs_main(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
 class Painter private[painter] (
     val device: GPUDevice,
     val surface: Surface,
+    /** The adapter this painter's device came from; null when the painter was
+      * handed a device.
+      */
+    val adapterInfo: Opt[GPUAdapterInfo],
 ):
   val queue: GPUQueue = device.queue
 
@@ -102,26 +106,20 @@ class Painter private[painter] (
   private val pipelineCache = Dict[GPURenderPipeline]()
   private var nextShadeId = 0
   private val resizeCallbacks = Arr[(Double, Double) => Unit]()
-  private var _adapterInfo: Opt[GPUAdapterInfo] = null
-  private var _readback: Opt[Readback] = null
+  private var readback: Opt[Readback] = null
 
   surface.onResize((w, h) => fireResize(w, h))
 
-  /** The adapter this painter's device came from; null when the painter was
-    * handed a device.
-    */
-  def adapterInfo: Opt[GPUAdapterInfo] = _adapterInfo
-
-  /** The browser canvas this painter presents to. Throws on a painter without
-    * a [[CanvasSurface]] (offline containers).
+  /** The browser canvas this painter presents to. Throws on a painter without a
+    * [[CanvasSurface]] (offline containers).
     */
   def canvas: HTMLCanvasElement = surface match
     case s: CanvasSurface => s.canvas
     case _ => throw jsError("Painter.canvas: this painter has no canvas")
 
-  private[painter] def readback: Readback =
-    if _readback.isNull then _readback = Readback(device)
-    _readback.get
+  private[painter] def ensureReadback(): Readback =
+    if readback.isNull then readback = Readback(device)
+    readback.get
 
   /** Register a callback invoked with `(width, height)` **immediately** (with
     * the current surface size) and again on every surface resize. Use it to
@@ -137,13 +135,13 @@ class Painter private[painter] (
       resizeCallbacks(k)(w, h)
       k += 1
 
-  /** Current surface width in physical pixels. `Double`, to match
-    * [[onResize]] — sizes are almost always used in ratios and float math.
+  /** Current surface width in physical pixels. `Double`, to match [[onResize]]
+    * — sizes are almost always used in ratios and float math.
     */
   def width: Double = surface.width
 
-  /** Current surface height in physical pixels. `Double`, to match
-    * [[onResize]] — sizes are almost always used in ratios and float math.
+  /** Current surface height in physical pixels. `Double`, to match [[onResize]]
+    * — sizes are almost always used in ratios and float math.
     */
   def height: Double = surface.height
 
@@ -152,8 +150,8 @@ class Painter private[painter] (
     * normal rendering: with nothing to read back it resolves immediately.
     */
   def awaitReadback(): js.Promise[Unit] =
-    if _readback.isNull then js.Promise.resolve[Unit](())
-    else _readback.get.awaitAll()
+    if readback.isNull then js.Promise.resolve[Unit](())
+    else readback.get.awaitAll()
 
   /** Convenience: set up a `CanvasInput` for this painter's canvas with the
     * interactive-canvas defaults (focusable, cleared outline, focus on
@@ -819,8 +817,8 @@ class Painter private[painter] (
     * painter.draw(shape2) // blends over shape1
     * }}}
     * For multi-pass / off-screen rendering use [[panel]] + [[paint]] +
-    * [[show]]. On a container painter `draw` output is not read back; draw
-    * into a panel and `show` it instead.
+    * [[show]]. On a container painter `draw` output is not read back; draw into
+    * a panel and `show` it instead.
     */
   def draw(
       shape: AnyShape,
@@ -1237,8 +1235,8 @@ class Painter private[painter] (
     * On a canvas painter this blits to the canvas. On a container painter it
     * reads back right away: one frame appended to a [[PixelFrames]], or a
     * [[PixelImage]]'s `data` overwritten — complete once [[awaitReadback]]
-    * resolves. The blit samples the panel, so a panel of another size is
-    * scaled and one of another format converted; at equal size it is exact.
+    * resolves. The blit samples the panel, so a panel of another size is scaled
+    * and one of another format converted; at equal size it is exact.
     */
   def show(panel: Panel): Unit =
     val encoder = device.createCommandEncoder()
@@ -1258,8 +1256,8 @@ class Painter private[painter] (
 
   /** Blit slot 0 of `panel` into `dst`: a full-screen triangle sampling the
     * panel with a nearest sampler. Shared by every `show` target. The fragment
-    * stage returns `vec4<f32>` and the GPU stores it in `dstFormat`, so
-    * scaling and format conversion need no extra code.
+    * stage returns `vec4<f32>` and the GPU stores it in `dstFormat`, so scaling
+    * and format conversion need no extra code.
     */
   private[painter] def blitInto(
       encoder: GPUCommandEncoder,
@@ -1331,9 +1329,9 @@ class Painter private[painter] (
   private val blitPipelines: Dict[GPURenderPipeline] =
     Dict[GPURenderPipeline]()
 
-  /** The blit pipeline for one destination format, created on first use.
-    * Shared by `show` (nearest sampler) and mip generation (linear sampler):
-    * same shader and layout, only the bind group's sampler differs.
+  /** The blit pipeline for one destination format, created on first use. Shared
+    * by `show` (nearest sampler) and mip generation (linear sampler): same
+    * shader and layout, only the bind group's sampler differs.
     */
   private def blitPipelineFor(format: TextureFormat): GPURenderPipeline =
     val key = format.asString
@@ -1975,24 +1973,30 @@ object Painter:
         WebGPU
           .requestDevice(adapter, requiredFeatures, requiredLimits)
           .map: device =>
-            val painter = create(target, device)
-            painter._adapterInfo = adapter.info
-            painter
+            createOn(target, device, adapter.info)
 
-  /** Create a painter on `target` with a caller-supplied `device`;
-    * synchronous, no lookups at all. For adapter-level control in user code
+  /** Create a painter on `target` with a caller-supplied `device`; synchronous,
+    * no lookups at all. For adapter-level control in user code
     * (`WebGPU.requestAdapter` → `WebGPU.requestDevice` → here).
     */
   def create(target: PixelTarget | Surface, device: GPUDevice): Painter =
+    createOn(target, device, null)
+
+  private def createOn(
+      target: PixelTarget | Surface,
+      device: GPUDevice,
+      adapterInfo: Opt[GPUAdapterInfo],
+  ): Painter =
     if target.isInstanceOf[Surface] then
-      build(target.asInstanceOf[Surface], device)
+      build(target.asInstanceOf[Surface], device, adapterInfo)
     else
       val readback = Readback(device)
       val painter = build(
         CaptureSurface(target.asInstanceOf[PixelTarget], readback),
         device,
+        adapterInfo,
       )
-      painter._readback = readback
+      painter.readback = readback
       painter
 
   // `init` goes through here, not through the union-typed `create`, so a
@@ -2004,13 +2008,15 @@ object Painter:
         WebGPU
           .requestDevice(adapter)
           .map: device =>
-            val painter = build(surface, device)
-            painter._adapterInfo = adapter.info
-            painter
+            build(surface, device, adapter.info)
 
-  private def build(surface: Surface, device: GPUDevice): Painter =
+  private def build(
+      surface: Surface,
+      device: GPUDevice,
+      adapterInfo: Opt[GPUAdapterInfo],
+  ): Painter =
     surface.configure(device)
-    new Painter(device, surface)
+    new Painter(device, surface, adapterInfo)
 
   /** Initialise WebGPU and run `setup` with the ready [[Painter]] — the
     * standard sketch entry point. All resource creation, `onResize`, and the

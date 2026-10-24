@@ -47,18 +47,18 @@ final class CanvasSurface private (
     val canvas: HTMLCanvasElement,
     val format: TextureFormat,
 ) extends Surface:
-  private var _queue: Opt[GPUQueue] = null
-  private var _context: Opt[GPUCanvasContext] = null
+  private var queue: Opt[GPUQueue] = null
+  private var context: Opt[GPUCanvasContext] = null
   private val resizeCallbacks = Arr[(Int, Int) => Unit]()
 
   def width: Int = canvas.width
   def height: Int = canvas.height
 
   def configure(device: GPUDevice): Unit =
-    _queue = device.queue
-    val context = WebGPU.getContext(canvas)
-    context.configure(Obj.literal(device = device, format = format.toJs))
-    _context = context
+    queue = device.queue
+    val canvasContext = WebGPU.getContext(canvas)
+    canvasContext.configure(Obj.literal(device = device, format = format.toJs))
+    context = canvasContext
 
     canvas.width = canvas.clientWidth
     canvas.height = canvas.clientHeight
@@ -86,10 +86,10 @@ final class CanvasSurface private (
       )
     observer.observe(canvas)
 
-  def currentTexture(): GPUTexture = _context.get.getCurrentTexture()
+  def currentTexture(): GPUTexture = context.get.getCurrentTexture()
 
   def present(encoder: GPUCommandEncoder): Unit =
-    _queue.get.submit(Arr(encoder.finish()))
+    queue.get.submit(Arr(encoder.finish()))
 
   def onResize(cb: (Int, Int) => Unit): Unit =
     resizeCallbacks.push(cb)
