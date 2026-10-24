@@ -442,5 +442,7 @@ Outside dev mode every one of these is inert, so they cost nothing to leave in.
 - Op catalog & shader patterns → [shader-dsl-guide.md](shader-dsl-guide.md)
 - Pitfalls (Double-on-left, mip clobber, F32 vs Double) →
   [gotchas.md](gotchas.md)
+- Offline rendering, readback to pixels, screenshots, GPU selection →
+  [painter-setup-guide.md](painter-setup-guide.md)
 - Per-symbol API → Metals `get-docs`/`inspect`, or the Scaladoc site
 - Canonical code → `examples/*`, one per feature

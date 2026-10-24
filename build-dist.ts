@@ -31,6 +31,10 @@ await mkdir(distDir, { recursive: true })
 
 await cp(join(examplesDir, "index.html"), join(distDir, "index.html"))
 await cp(outDir, join(distDir, "out"), { recursive: true })
+await cp(join(examplesDir, "example_helpers"), join(distDir, "example_helpers"), {
+	recursive: true,
+	filter: (src) => statSync(src).isDirectory() || src.endsWith(".js"),
+})
 
 const copied: string[] = []
 for (const entry of readdirSync(examplesDir)) {

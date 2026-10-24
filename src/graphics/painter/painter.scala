@@ -96,9 +96,13 @@ class Painter private[painter] (
     /** The adapter this painter's device came from; null when the painter was
       * handed a device.
       */
-    val adapterInfo: Opt[GPUAdapterInfo],
+    val adapter: Opt[GPUAdapter],
 ):
   val queue: GPUQueue = device.queue
+
+  /** [[adapter]]'s info; null when the painter was handed a device. */
+  val adapterInfo: Opt[GPUAdapterInfo] =
+    if adapter.isNull then null else adapter.get.info
 
   /** The surface's format: the default panel format and the `show` target. */
   val preferredFormat: TextureFormat = surface.format
@@ -107,8 +111,17 @@ class Painter private[painter] (
   private var nextShadeId = 0
   private val resizeCallbacks = Arr[(Double, Double) => Unit]()
   private var readback: Opt[Readback] = null
+  // `atSize` override of the target size; 0 = none, follow the surface.
+  private var overrideWidth = 0
+  private var overrideHeight = 0
 
   surface.onResize((w, h) => fireResize(w, h))
+
+  private def targetWidth: Int =
+    if overrideWidth > 0 then overrideWidth else surface.width
+
+  private def targetHeight: Int =
+    if overrideHeight > 0 then overrideHeight else surface.height
 
   /** The browser canvas this painter presents to. Throws on a painter without a
     * [[CanvasSurface]] (offline containers).
@@ -122,12 +135,13 @@ class Painter private[painter] (
     readback.get
 
   /** Register a callback invoked with `(width, height)` **immediately** (with
-    * the current surface size) and again on every surface resize. Use it to
-    * update aspect-dependent uniforms (camera aspect, resolution bindings).
+    * the current target size) and again on every surface resize, and on entry
+    * to and exit from an [[atSize]] scope. Use it to update aspect-dependent
+    * uniforms (camera aspect, resolution bindings).
     */
   def onResize(cb: (Double, Double) => Unit): Unit =
     resizeCallbacks.push(cb)
-    cb(surface.width, surface.height)
+    cb(targetWidth, targetHeight)
 
   private[painter] def fireResize(w: Double, h: Double): Unit =
     var k = 0
@@ -135,15 +149,47 @@ class Painter private[painter] (
       resizeCallbacks(k)(w, h)
       k += 1
 
-  /** Current surface width in physical pixels. `Double`, to match [[onResize]]
-    * — sizes are almost always used in ratios and float math.
+  /** Current target width in physical pixels: the surface's, or the
+    * [[atSize]] override inside one. `Double`, to match [[onResize]] — sizes
+    * are almost always used in ratios and float math.
     */
-  def width: Double = surface.width
+  def width: Double = targetWidth
 
-  /** Current surface height in physical pixels. `Double`, to match [[onResize]]
-    * — sizes are almost always used in ratios and float math.
+  /** Current target height in physical pixels: the surface's, or the
+    * [[atSize]] override inside one. `Double`, to match [[onResize]] — sizes
+    * are almost always used in ratios and float math.
     */
-  def height: Double = surface.height
+  def height: Double = targetHeight
+
+  /** Runs `body` with the target size overridden to `width` × `height`: panels
+    * without their own size are painted at it, [[width]] / [[height]] report
+    * it, and [[onResize]] callbacks fire with it on entry. On exit the previous
+    * size is restored and the callbacks fire again. The next `paint` after the
+    * scope reallocates the panels back to the surface size, so panels that
+    * carry history across frames lose it. Fixed-size panels are unaffected.
+    *
+    * For renders at another resolution than the canvas, e.g. a 4K screenshot:
+    * {{{
+    * val shot = PixelImage(3840, 2160)
+    * val saved = p.atSize(shot.width, shot.height):
+    *   p.paint(scene, final)
+    *   p.showTo(final, shot)
+    * }}}
+    * `body` is synchronous and its result is returned; scopes nest.
+    */
+  def atSize[A](width: Int, height: Int)(body: => A): A =
+    if !(width > 0 && height > 0) then
+      throw jsError(s"Painter.atSize: invalid size ${width}×$height")
+    val prevWidth = overrideWidth
+    val prevHeight = overrideHeight
+    overrideWidth = width
+    overrideHeight = height
+    fireResize(width, height)
+    try body
+    finally
+      overrideWidth = prevWidth
+      overrideHeight = prevHeight
+      fireResize(targetWidth, targetHeight)
 
   /** Resolves once every pending readback has landed in its container; only
     * then is a [[PixelFrames]] / [[PixelImage]] target complete. Not a step of
@@ -857,7 +903,7 @@ class Painter private[painter] (
   // =========================================================================
 
   private def paintPanel(panel: Panel): Unit =
-    panel.ensureSize(surface.width, surface.height)
+    panel.ensureSize(targetWidth, targetHeight)
     val msaa = panel.multisample
 
     // Step 1: render shapes into main texture(s)
@@ -1242,6 +1288,27 @@ class Painter private[painter] (
     val encoder = device.createCommandEncoder()
     blitInto(encoder, panel, surface.currentTexture(), preferredFormat)
     surface.present(encoder)
+
+  /** Write an already-[[paint]]ed panel into `into`, by the same rules as
+    * [[show]] on a container painter: one frame appended to a [[PixelFrames]],
+    * or a [[PixelImage]]'s `data` overwritten. Works on any painter, canvas
+    * ones included — screenshots, a second resolution or format, a bake
+    * download. The panel is scaled to `into`'s size; combine with [[atSize]] to
+    * render at that size instead.
+    *
+    * Reads back right away and resolves with `into` once this readback has
+    * landed, so no [[awaitReadback]] is needed. Other readbacks still in
+    * flight are not awaited. An `rgba32float` panel needs the
+    * `float32-filterable` device feature; an `rgba32float` `into` does not.
+    */
+  def showTo[T <: PixelTarget](panel: Panel, into: T): js.Promise[T] =
+    val image = into.asInstanceOf[PixelImage]
+    validatePixelTarget(into, "Painter.showTo")
+    val rb = ensureReadback()
+    val texture = rb.captureTexture(image.width, image.height, image.format)
+    val encoder = device.createCommandEncoder()
+    blitInto(encoder, panel, texture, image.format.textureFormat)
+    rb.read(encoder, texture, into).map(_ => into)
 
   /** Convenience: [[paint]] then [[show]] a single panel. Use the separate
     * calls when you paint several panels before presenting one.
@@ -1973,28 +2040,30 @@ object Painter:
         WebGPU
           .requestDevice(adapter, requiredFeatures, requiredLimits)
           .map: device =>
-            createOn(target, device, adapter.info)
+            createOn(target, device, adapter, gpu)
 
   /** Create a painter on `target` with a caller-supplied `device`; synchronous,
     * no lookups at all. For adapter-level control in user code
     * (`WebGPU.requestAdapter` → `WebGPU.requestDevice` → here).
     */
   def create(target: PixelTarget | Surface, device: GPUDevice): Painter =
-    createOn(target, device, null)
+    createOn(target, device, null, null)
 
   private def createOn(
       target: PixelTarget | Surface,
       device: GPUDevice,
-      adapterInfo: Opt[GPUAdapterInfo],
+      adapter: Opt[GPUAdapter],
+      gpu: Opt[GPU],
   ): Painter =
     if target.isInstanceOf[Surface] then
-      build(target.asInstanceOf[Surface], device, adapterInfo)
+      build(target.asInstanceOf[Surface], device, adapter, gpu)
     else
       val readback = Readback(device)
       val painter = build(
         CaptureSurface(target.asInstanceOf[PixelTarget], readback),
         device,
-        adapterInfo,
+        adapter,
+        gpu,
       )
       painter.readback = readback
       painter
@@ -2008,15 +2077,33 @@ object Painter:
         WebGPU
           .requestDevice(adapter)
           .map: device =>
-            build(surface, device, adapter.info)
+            build(surface, device, adapter, gpu)
 
   private def build(
       surface: Surface,
       device: GPUDevice,
-      adapterInfo: Opt[GPUAdapterInfo],
+      adapter: Opt[GPUAdapter],
+      gpu: Opt[GPU],
   ): Painter =
+    retainWithDevice(device, adapter, gpu)
     surface.configure(device)
-    new Painter(device, surface, adapterInfo)
+    new Painter(device, surface, adapter)
+
+  // The device does not keep its `GPU` (Dawn instance) alive: once that is
+  // collected mid-render, node-webgpu crashes the process. Held with the
+  // adapter as a JS property, because the linker drops Scala fields that are
+  // never read.
+  private def retainWithDevice(
+      device: GPUDevice,
+      adapter: Opt[GPUAdapter],
+      gpu: Opt[GPU],
+  ): Unit =
+    if adapter.notNull || gpu.notNull then
+      device
+        .asInstanceOf[js.Dynamic]
+        .updateDynamic("trivalibsRetained")(
+          Arr[js.Any](adapter.asInstanceOf[js.Any], gpu.asInstanceOf[js.Any]),
+        )
 
   /** Initialise WebGPU and run `setup` with the ready [[Painter]] — the
     * standard sketch entry point. All resource creation, `onResize`, and the

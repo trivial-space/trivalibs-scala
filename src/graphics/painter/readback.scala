@@ -147,6 +147,41 @@ private[painter] final class Readback(device: GPUDevice):
     if js.isUndefined(pool.asInstanceOf[js.Any]) then stagingPool.set(key, Arr(buffer))
     else pool.push(buffer)
 
+/** Throws, prefixed with `where`, unless `target` is a well-formed container:
+  * one of the three formats, a positive size, and an array `frames` or a
+  * `data` array of the format's type and length `width · height · 4`.
+  */
+private[painter] def validatePixelTarget(
+    target: PixelTarget,
+    where: String,
+): Unit =
+  val image = target.asInstanceOf[PixelImage]
+  val width = image.width
+  val height = image.height
+  val format = image.format
+  if format.bytesPerPixel == 0 then
+    throw jsError(
+      s"$where: unsupported container format '${format.toJs}'; " +
+        "use rgba8unorm, rgba16float or rgba32float",
+    )
+  if !(width > 0 && height > 0) then
+    throw jsError(s"$where: invalid container size ${width}×$height")
+  if js.Object.hasProperty(target.asInstanceOf[js.Object], "frames") then
+    if !js.Array.isArray(target.asInstanceOf[PixelFrames].frames) then
+      throw jsError(s"$where: PixelFrames.frames must be an array")
+  else
+    val data = image.data
+    if js.isUndefined(data) || !PixelData.matches(format, data) then
+      throw jsError(
+        s"$where: PixelImage.data must be the array type of '${format.toJs}' " +
+          "(Uint8Array / Float16Array / Float32Array)",
+      )
+    val length = data.asInstanceOf[js.Dynamic].length.asInstanceOf[Int]
+    if length != width * height * 4 then
+      throw jsError(
+        s"$where: PixelImage.data length $length is not width · height · 4 = ${width * height * 4}",
+      )
+
 // A JS `WeakMap` from objects to ints.
 @js.native
 private[painter] trait WeakIntMap extends js.Object:
@@ -168,28 +203,7 @@ private[painter] final class CaptureSurface(
   val pixelFormat: PixelFormat = image.format
   val format: TextureFormat = pixelFormat.textureFormat
 
-  if pixelFormat.bytesPerPixel == 0 then
-    throw jsError(
-      s"Painter.create: unsupported container format '${pixelFormat.toJs}'; " +
-        "use rgba8unorm, rgba16float or rgba32float",
-    )
-  if !(width > 0 && height > 0) then
-    throw jsError(s"Painter.create: invalid container size ${width}×$height")
-  if js.Object.hasProperty(target.asInstanceOf[js.Object], "frames") then
-    if !js.Array.isArray(target.asInstanceOf[PixelFrames].frames) then
-      throw jsError("Painter.create: PixelFrames.frames must be an array")
-  else
-    val data = image.data
-    if js.isUndefined(data) || !PixelData.matches(pixelFormat, data) then
-      throw jsError(
-        s"Painter.create: PixelImage.data must be the array type of '${pixelFormat.toJs}' " +
-          "(Uint8Array / Float16Array / Float32Array)",
-      )
-    val length = data.asInstanceOf[js.Dynamic].length.asInstanceOf[Int]
-    if length != width * height * 4 then
-      throw jsError(
-        s"Painter.create: PixelImage.data length $length is not width · height · 4 = ${width * height * 4}",
-      )
+  validatePixelTarget(target, "Painter.create")
 
   def configure(device: GPUDevice): Unit =
     if pixelFormat == PixelFormat.Rgba32Float &&

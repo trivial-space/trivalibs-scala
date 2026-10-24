@@ -1,8 +1,8 @@
 # Headless painter, render-to-file, and texture sources
 
-**Status: M1.0, M1.0b and M1.1 implemented (browser check of the examples
-pending); rest planned. §1–3 (Milestone 1) reviewed and approved; §4 onward
-(Milestone 2) not yet reviewed.** Scope is **offline render to file**, not
+**Status: Milestone 1 (M1.0–M1.4) implemented and verified, including the
+browser check of all examples by hand. Milestone 2 planned. §1–3 (Milestone 1)
+reviewed and approved; §4 onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**, not
 on-screen rendering outside the browser. Takes over the host seam and the
 headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
 `RenderHost` becomes `Surface` here); native-window hosts (Deno windows,
@@ -73,12 +73,14 @@ Takeaways:
   256, `mapAsync(READ)`, strip the row padding, encode PNG (`pngjs`). Deno's
   `@std/webgpu` `createCapture` + `getRowPadding` is the same pattern. The
   painter's capture surface is this, packaged.
-- node-webgpu keeps the process alive while the `GPU` object returned by
-  `create()` is referenced (**to verify, M1.3**). For render-and-exit scripts
-  the driver ends with `process.exit(0)` (`Deno.exit(0)`) once the render
-  promise — file writes and encoder subprocesses included — has resolved; the OS
-  and driver reclaim all GPU memory at process end. No library teardown needed
-  for this milestone; explicit freeing (`Painter.destroy()` and per-resource
+- ~~node-webgpu keeps the process alive while the `GPU` object returned by
+  `create()` is referenced.~~ **Disproved in M1.3:** the process exits on its
+  own on Node and Bun, with the `GPU`, painter and device still referenced, and
+  `process.exit(0)` right after the last readback is clean too (§9). The
+  opposite holds instead: the `GPU` must stay referenced while its device
+  works, or node-webgpu crashes — so the painter retains it. The OS and driver
+  reclaim all GPU memory at process end. No library teardown needed for this
+  milestone; explicit freeing (`Painter.destroy()` and per-resource
   `destroy()`) is deferred to long-running hosts, see
   [independent-todos.md](independent-todos.md) "GPU resources".
 - **Verification runs on node-webgpu only.** Deno's runtime is being
@@ -828,8 +830,8 @@ def showTo[T <: PixelTarget](panel: Panel, into: T): js.Promise[T]
 
 /** Runs `body` with the target size overridden: panels without their own
   * size use `width`×`height`, `p.width` / `p.height` report it, and `onResize`
-  * callbacks fire with it. Restored after `body`. */
-def atSize(width: Int, height: Int)(body: => Unit): Unit
+  * callbacks fire with it. Restored after `body`, whose result is returned. */
+def atSize[A](width: Int, height: Int)(body: => A): A
 ```
 
 **A distinct name, not a `show` overload.** The return type differs
@@ -841,7 +843,7 @@ regular paint. At a different resolution:
 
 ```scala
 val shot = PixelImage(3840, 2160)
-p.atSize(shot.width, shot.height):
+val saved = p.atSize(shot.width, shot.height):
   p.paint(scene, bloom, final)
   p.showTo(final, shot)
 // the next regular p.paint(...) sizes the panels back to the canvas
@@ -1351,7 +1353,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 
 ### Milestone 1 — headless painter
 
-**M1.0 — host seam.** 🔄 implemented, browser check pending.
+**M1.0 — host seam.** ✅ verified in a desktop browser by hand.
 
 - `Surface` + `CanvasSurface`.
 - `Painter.create(surface, gpu | device)`, which takes `Surface` targets only.
@@ -1363,7 +1365,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 - Facade additions (§5).
 - _Proof:_ no behavior change; all examples render.
 
-**M1.0b — shared blit (§3.4).** 🔄 implemented, browser check pending.
+**M1.0b — shared blit (§3.4).** ✅ verified in a desktop browser by hand.
 
 - A shared `blitInto` (sampled blit), with a per-format pipeline cache shared
   with mip generation (`blitPipelineFor`), and the blit bind group cached on
@@ -1388,20 +1390,21 @@ Each step lands independently and leaves `examples/` and the sketches working.
   `PixelImage` target (`rgba8unorm`), and a 16-bit output (`rgba16float`). All
   later headless proofs (M1.2, M1.2b, M1.3, M2) use the same setup.
 
-**M1.2 — motion sequences (§3.7, §3.8).**
+**M1.2 — motion sequences (§3.7, §3.8).** ✅ verified on Node and Bun.
 
 - An example with a fixed-`tpf` loop + `awaitReadback()`. A host script encodes
   mp4 / gif via ffmpeg.
 - _Proof:_ the headless example writes an mp4 and a gif.
 
-**M1.2b — ad-hoc targets (§3.9).**
+**M1.2b — ad-hoc targets (§3.9).** ✅ verified offline and in a desktop
+browser by hand.
 
 - `p.showTo(panel, into)`, `p.atSize(w, h)(body)`.
 - _Proof:_ a browser example whose "4K screenshot" button downloads a PNG while
   the canvas keeps rendering, and an offline example that writes a second,
   smaller preview image.
 
-**M1.3 — GPU tests and process lifecycle.**
+**M1.3 — GPU tests and process lifecycle.** ✅ verified on Node and Bun.
 
 - munit GPU integration tests. `scala-cli test` already runs on Node, so with
   `webgpu` installed a test can render and read back (lavapipe in CI).
@@ -1417,7 +1420,7 @@ Each step lands independently and leaves `examples/` and the sketches working.
 - _Proof:_ pixel assertions on a known render, and a recorded lifecycle result
   per runtime.
 
-**M1.4 — setup guide (§6.1).** Written once M1.0–M1.2b have landed, against the
+**M1.4 — setup guide (§6.1).** ✅ written. Written once M1.0–M1.2b have landed, against the
 shipped API.
 
 - `docs/guide/painter-setup-guide.md`.
@@ -1548,9 +1551,10 @@ scripts and are run, not deployed.
   24.16): Bun loads the addon. `create()`, `mapAsync`, and the `rgba8unorm` /
   `rgba16float` / `rgba32float` readbacks give identical results on both
   runtimes. So the drivers run on Node and Bun.
-- **Process exit** (observed in M1.1, verified in M1.3): the headless example
-  exits on its own on Node and Bun, without `process.exit`. That contradicts the
-  §1.1 claim.
+- ✅ **Process exit** (verified in M1.3): exits on its own on Node and Bun,
+  without `process.exit`, also with the `GPU` held globally; `process.exit(0)`
+  right after the readback is clean. That contradicts the §1.1 claim, which is
+  corrected. The `GPU` must stay referenced while the device works (§9, M1.3).
 - **Software adapter** (observed in M1.1): `forceFallbackAdapter: true` returned
   no adapter, or on a reused `GPU` the hardware one. Dawn in node-webgpu 0.6.2
   on Linux ships no SwiftShader. Mesa's llvmpipe is listed as a Vulkan adapter
@@ -1560,13 +1564,11 @@ scripts and are run, not deployed.
 - `Float16Array`: Node 24.16 and Bun 1.4.2 are checked.
 - `rgba32float` capture and readback on node-webgpu's backends (Vulkan, and the
   software fallback).
-- `rgba16float` readback: `copyTextureToBuffer` of `rgba16float` with 8-byte
-  texels and 256-byte row alignment on node-webgpu (Vulkan and the software
-  fallback).
-- A non-native JS trait (`trait PixelFrames extends js.Object`) accepts a plain
-  TS object literal at the call boundary without wrapping — confirm
-  `frames.push` from Scala is visible to the TS caller (it should be: same array
-  object).
+- ✅ `rgba16float` readback (M1.3 tests): exact on Intel Vulkan and on
+  llvmpipe.
+- ✅ A non-native JS trait (`trait PixelFrames extends js.Object`) accepts a
+  plain TS object literal without wrapping, and frames pushed from Scala are
+  visible to the TS caller (`headless_sequence`).
 - Firefox `importExternalTexture` / `copyExternalImageToTexture(VideoFrame)`
   current status.
 - `requestVideoFrameCallback`: confirm Baseline status in all target browsers,
@@ -1712,7 +1714,8 @@ Implemented together, in one change, because M1.1's readback is built on M1.0b's
       examples' convention for runtime-loaded files, ready for the M2.1
       roundtrip. That replaces the gitignored `out/` of the first version;
     - one driver, `render.node.ts`, serves Node and Bun;
-    - `pixels.d.ts` lives in the example folder.
+    - `pixels.d.ts` lives in the example folder (moved to
+      `examples/example_helpers/` in M1.2, once a second driver used it).
 14. **Facade scope.** Not added: `OffscreenCanvas` and `VideoFrame` (M2),
     `importExternalTexture`, and `requestVideoFrameCallback` (later).
     `writeTexture`, `copyExternalImageToTexture` and `copyTextureToTexture` are
@@ -1737,8 +1740,96 @@ Implemented together, in one change, because M1.1's readback is built on M1.0b's
   predates this change). That is noisy in offline driver output. Leave it, or
   gate it, later.
 
-**Open:** M1.0 and M1.0b are marked as awaiting a browser check by hand (§6).
-The headless Chromium comparison above covers the deterministic examples only.
+**Closed (with M1.2–M1.4):** all browser examples were checked by hand in a
+desktop browser: they work and render unchanged.
+
+### 2026-10-24 — M1.2, M1.2b, M1.3, M1.4
+
+Not committed yet.
+
+**Landed:**
+
+- `src/graphics/painter/painter.scala`:
+  - `showTo(panel, into)` and `atSize(width, height)(body)`;
+  - `paintPanel`, `width`, `height` and `onResize` follow the `atSize`
+    override (`targetWidth` / `targetHeight`);
+  - the constructor takes the `adapter` instead of its info; `adapterInfo` is
+    derived from it;
+  - `retainWithDevice` keeps the `GPU` and the adapter alive with the device.
+- `src/graphics/painter/readback.scala`: the container validation is a shared
+  `validatePixelTarget`, used by `create` and `showTo`.
+- `src/prelude/painter.scala`: exports `PixelFormat`, `PixelData`,
+  `PixelTarget`, `PixelFrames`, `PixelImage`, `Surface`, `CanvasSurface`,
+  `WebGPU`, `PowerPreference`, and a `GPU` alias.
+- `examples/headless_sequence/` (M1.2 + the offline M1.2b proof): a seamless
+  48-frame loop at 24 fps, written as `assets/sequence.mp4` and `sequence.gif`,
+  plus a 128×72 `preview.png` rendered with `atSize` + `showTo`.
+- `examples/screenshot/` (M1.2b browser proof): a "4K screenshot" button that
+  downloads a 3840×2160 PNG while the canvas keeps animating. Registered in
+  `examples/index.html`.
+- `examples/example_helpers/`: `ffmpeg.ts` (mp4 / gif from raw frames),
+  `download.js` (browser PNG download), and `pixels.d.ts`, moved here from
+  `headless_triangle/`. `build-dist.ts` copies the folder's `.js` files.
+- `test/graphics/painter/HeadlessPainter.test.scala` (M1.3): 9 GPU tests.
+- `docs/guide/painter-setup-guide.md` (M1.4), linked from the sketch authoring
+  guide.
+- The three headless / screenshot examples use the preludes.
+
+**Verified:**
+
+- `bun run check`, clean; all examples build; `bun run test` green.
+- The 9 GPU tests pass on Intel Vulkan and on llvmpipe
+  (`TRIVALIBS_WEBGPU_ADAPTER`): exact rgba8 clears, top-row-first orientation at
+  pixel centers, rgba16float HDR values, the rgba32float fail-fast, frame order,
+  last-show-wins, `showTo` resolving with its target (scaled), `showTo`
+  validation, `atSize` sizes and `onResize` in / out.
+- `headless_sequence` on Node and Bun: 48 frames, mp4 and gif with 48 frames
+  each, a 128×72 preview.
+- `screenshot`, in a desktop browser by hand: the PNG downloads while the
+  canvas keeps rendering.
+- Lifecycle, 10 runs each on Node 24.16 and Bun 1.4.2: `GPU` passed inline,
+  `GPU` held globally, and `process.exit(0)` right after the render. All 60
+  exit with code 0 and no driver output.
+- Every Scala snippet in the setup guide compiles; the Scala-only variant (§3
+  of the guide) runs on Node.
+
+**Deviations from the plan** (§3 updated where marked):
+
+1. **`atSize` returns its body's result** (`atSize[A](w, h)(body: => A): A`),
+   so the `showTo` promise comes out of the scope. (§3.9)
+2. **`showTo` needs no `float32-filterable` for an `rgba32float` target**: the
+   capture texture is a core render target, and only an `rgba32float` panel
+   needs the feature.
+3. **The painter retains its `GPU` and adapter** as a JS property on the
+   device. Not planned; see the findings.
+4. **The preludes export the offline vocabulary**, including the native `GPU`
+   as a type alias. The prelude comment says why `GPU`, `WebGPU` and
+   `PowerPreference` are the exception to "no raw facades".
+5. **M1.2b's offline proof lives in `headless_sequence`** (the preview image)
+   rather than a separate example.
+
+**Findings:**
+
+- **node-webgpu crashes when the `GPU` object is collected mid-render.** Dawn's
+  device does not keep its instance alive. Passing `create([])` inline aborted
+  the process at 256 px and above (`futex`, `pthread_mutex_lock` assertion,
+  `std::system_error`) or hung it. Holding the `GPU` in a variable avoided it,
+  which is why the M1.1 driver never hit it. The painter now keeps the `GPU`
+  and adapter alive with its device; after `create(target, device)` that is the
+  caller's job (setup guide §6).
+- **The Scala.js linker drops fields that are never read.** A first attempt
+  held the adapter in a constructor `val`; the linked JS did not store it. The
+  retention therefore writes a JS property on the device, which the linker
+  keeps.
+- **Headless Chromium cannot verify a canvas readback.** In headless Chromium
+  155 (SwiftShader), once a device has presented one frame to a canvas, every
+  `mapAsync` on it rejects with "A valid external Instance reference no longer
+  exists". Plain WebGPU without the library does the same, with every flag
+  combination tried. A container painter, and a device that only configured a
+  canvas, read back fine. The screenshot example was therefore checked by hand
+  in a desktop browser.
+- The gif is the bulk of the committed assets (≈750 KB at 256×144, 48 frames,
+  bayer dither); the mp4 is ≈30 KB.
 
 ## Sources
 

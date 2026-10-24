@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { create } from 'webgpu'
 import { encodePng } from '../example_helpers/png.ts'
 import { render } from '../out/headless_triangle.js'
-import type { PixelFrames, PixelImage } from './pixels.d.ts'
+import type { PixelFrames, PixelImage } from '../example_helpers/pixels.d.ts'
 
 const args = process.argv.slice(2)
 const flag = (name: string) => args.includes(name)

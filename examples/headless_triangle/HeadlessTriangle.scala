@@ -1,10 +1,7 @@
 package examples.headless_triangle
 
-import trivalibs.graphics.buffers.*
-import trivalibs.graphics.math.cpu.{*, given}
-import trivalibs.graphics.painter.*
-import trivalibs.graphics.shader.{*, given}
-import trivalibs.utils.js.*
+import trivalibs.prelude.core.{*, given}
+import trivalibs.prelude.painter.{*, given}
 
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
