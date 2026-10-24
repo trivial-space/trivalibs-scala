@@ -10,12 +10,12 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 
 /** Offline render without a DOM: the host passes a `GPU` (node-webgpu's
-  * `create([...])`) and a `PixelImage` / `PixelFrames` container, and
-  * processes the pixels once the promise resolves. See `render.node.ts`.
+  * `create([...])`) and a `PixelImage` / `PixelFrames` container, and processes
+  * the pixels once the promise resolves. See `render.node.ts`.
   *
   * Shows `frameCount` frames whose tint ramps up to `intensity`, so a
-  * `PixelFrames` target gets distinct frames and a `PixelImage` keeps the
-  * last one. An `intensity` above 1 survives into float containers (HDR).
+  * `PixelFrames` target gets distinct frames and a `PixelImage` keeps the last
+  * one. An `intensity` above 1 survives into float containers (HDR).
   */
 @JSExportTopLevel("render", moduleID = "headless_triangle")
 def render(
@@ -32,7 +32,8 @@ def render(
       out,
       gpu,
       forceFallbackAdapter = software,
-      requireAdapter = maybe(requireName.length > 0, WebGPU.adapterNamed(requireName)),
+      requireAdapter =
+        maybe(requireName.length > 0, WebGPU.adapterNamed(requireName)),
       requiredFeatures =
         maybe(format == PixelFormat.Rgba32Float, Arr("float32-filterable")),
       logAdapter = true,
@@ -64,12 +65,12 @@ def render(
       val shape = painter
         .shape(painter.form(vertices = vertices), shade)
         .bind("tint" := tint)
-      val panel = painter.panel(shape = shape, clearColor = (0.1, 0.1, 0.15, 1.0))
+      val panel =
+        painter.panel(shape = shape, clearColor = (0.1, 0.1, 0.15, 1.0))
 
       for i <- 1 to frameCount do
         val k = intensity * i / frameCount
-        tint := Vec3(k, k, k)
-        painter.paint(panel)
-        painter.show(panel)
+        tint := Vec3(k)
+        painter.paintAndShow(panel)
 
       painter.awaitReadback()
