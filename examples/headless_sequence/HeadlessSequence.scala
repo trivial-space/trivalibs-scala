@@ -6,7 +6,7 @@ import trivalibs.prelude.painter.{*, given}
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 
-/** Offline motion sequence: the script owns the loop and steps the animation
+/** Offscreen motion sequence: the script owns the loop and steps the animation
   * with a fixed `tpf`, so every frame is exact regardless of GPU speed. Each
   * `show` appends one frame to `out`; the host encodes them once the promise
   * resolves. See `render.node.ts`.
@@ -24,7 +24,7 @@ def render(
     frameCount: Int,
 ): js.Promise[Unit] =
   Painter
-    .create(out, gpu, logAdapter = true)
+    .init(out, gpu, logAdapter = true)
     .flatMap: painter =>
       type Uniforms = (phase: Float, res: Vec2)
 
@@ -48,7 +48,9 @@ def render(
       val phase = painter.binding(0.0)
       val res = painter.binding[Vec2]
       val panel =
-        painter.panel(layer = painter.layer(shade).bind("phase" := phase, "res" := res))
+        painter.panel(layer =
+          painter.layer(shade).bind("phase" := phase, "res" := res),
+        )
 
       painter.onResize: (w, h) =>
         res.set(Vec2(w, h))

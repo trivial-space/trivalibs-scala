@@ -33,10 +33,10 @@ def myShape(canvas: HTMLCanvasElement): Unit =
 
 Two pieces of advice, both easy to follow and awkward to retrofit:
 
-- **Let the host call in, rather than running on import.** A
-  `@JSExportTopLevel` function the page invokes gives the host control over
-  _when_ the sketch starts; a `@main` def runs as a side effect of loading the
-  module, which is harder to sequence and to reuse.
+- **Let the host call in, rather than running on import.** A `@JSExportTopLevel`
+  function the page invokes gives the host control over _when_ the sketch
+  starts; a `@main` def runs as a side effect of loading the module, which is
+  harder to sequence and to reuse.
 - **Take the canvas as a parameter.** Looking it up with
   `document.getElementById` ties the bundle to a browser DOM. Passing it in lets
   the same code run under a host that has none — e.g. NativeScript Canvas, where
@@ -47,8 +47,7 @@ the consuming project**, not of this library; a project that runs many sketches
 will want to fix them so its host glue is identical everywhere. This repo's own
 `examples/` use `@JSExportTopLevel("main", moduleID = "<example>")` and look the
 canvas up from `document`, because they are bundled many-to-one and each owns
-its page — a reasonable choice for that setup, and not a general
-recommendation.
+its page — a reasonable choice for that setup, and not a general recommendation.
 
 ### The preludes
 
@@ -75,8 +74,8 @@ Two names differ from the raw imports, deliberately:
 - `Vec2`…`Mat4` come from `graphics.math.cpu`; the `gpu` package re-exports the
   same six names for shader contracts, and exporting both would clash.
 
-Angle constants are **`Pi`** and **`Tau`** (`Tau` = 2π, a full turn) — capitalised,
-from `utils.numbers` via `prelude.core`.
+Angle constants are **`Pi`** and **`Tau`** (`Tau` = 2π, a full turn) —
+capitalised, from `utils.numbers` via `prelude.core`.
 
 ## 2. The core pipeline
 
@@ -135,8 +134,8 @@ val panel = p.panel(shape = shape, clearColor = (0.05, 0.06, 0.1, 1.0), depthTes
   `(position: Vec3, uv: Vec2)`, use `WithNormal[V]` for the attribs schema).
 - **Builders**: `Box` — `.faces` (each as `(quad, normal)`), or per-face
   `.frontFace`/`.topFace`/… with a `(corner, uvw) => vertex` fn for custom
-  per-vertex attributes (UVs etc.); `sphereMesh(vSeg, hSeg)(f)`;
-  `Grid` → `Mesh(grid.ccwQuads)`.
+  per-vertex attributes (UVs etc.); `sphereMesh(vSeg, hSeg)(f)`; `Grid` →
+  `Mesh(grid.ccwQuads)`.
 - Transform meshes with `mesh.map` / `flatMap`. All three builders are in the
   `geometry3d_scene` example (box + sphere + terrain grid).
 
@@ -246,16 +245,16 @@ val tileSampler = p.sampler(
 )
 ```
 
-Without `AddressMode.Repeat` the out-of-range UV clamps into a smear at the
-edge rather than tiling. `bind`
-matches only on the **field name** and a compatible **value type** — it is
-stage-agnostic and never mentions visibility (which is convenient: the same
-`bind` call works regardless of stage).
+Without `AddressMode.Repeat` the out-of-range UV clamps into a smear at the edge
+rather than tiling. `bind` matches only on the **field name** and a compatible
+**value type** — it is stage-agnostic and never mentions visibility (which is
+convenient: the same `bind` call works regardless of stage).
 
 Shader-stage **visibility** is instead declared in the shade's uniform schema
 (the `U` type parameter), by wrapping field types: `VertexUniform[T]` /
 `FragmentUniform[T]` (bare `T` = both stages; in `layerShade` everything is
-fragment, so no wrapper needed). See the [shader DSL guide](shader-dsl-guide.md).
+fragment, so no wrapper needed). See the
+[shader DSL guide](shader-dsl-guide.md).
 
 **Panel textures** are declared as a separate `P` schema of `FragmentPanel`
 markers and read via `ctx.textures.<name>`:
@@ -298,10 +297,10 @@ uniform says how many are live, and the shader loops to `count`:
 loop(1, count.toI32)(i => col := col.mix(stops(i).rgb, …))
 ```
 
-Elements past the ones written read as zero on a fresh binding. One caveat:
-**a later, shorter `set` does not clear the tail** — bind 8 values, then 3, and
-elements 3..7 still hold the old ones. That is exactly what `count` masks off, so
-the pattern is safe as long as the shader honours it.
+Elements past the ones written read as zero on a fresh binding. One caveat: **a
+later, shorter `set` does not clear the tail** — bind 8 values, then 3, and
+elements 3..7 still hold the old ones. That is exactly what `count` masks off,
+so the pattern is safe as long as the shader honours it.
 
 A held binding takes its capacity from its own type, so updates stay bare too:
 
@@ -404,8 +403,8 @@ the `animate` body.
 
 Authoring a sketch means editing a constant, rebuilding, and looking. Vite
 hot-reloads the new module, which by default drops you back at the camera's
-start position — so every rebuild costs a walk back to whatever you were
-looking at. `import trivalibs.dev.*` fixes that:
+start position — so every rebuild costs a walk back to whatever you were looking
+at. `import trivalibs.dev.*` fixes that:
 
 ```scala
 val cam = PerspectiveCamera(fov = 0.85, near = 0.1, far = 150.0, pos = …)
@@ -421,9 +420,9 @@ devPreserve(cam)          // pos + rotH/rotV survive the reload, restored in pla
   the next reload.
 - **`devMode`** — `true` under the Vite dev server, `false` in a built sketch
   (it tests `import.meta.hot`, which Vite strips in production, so the branch is
-  tree-shaken out). Gate any **development affordance that must not ship** on
-  it — a free-flying camera, a debug overlay, a bypass of a constraint the
-  finished piece depends on:
+  tree-shaken out). Gate any **development affordance that must not ship** on it
+  — a free-flying camera, a debug overlay, a bypass of a constraint the finished
+  piece depends on:
 
   ```scala
   cam.pos = bounds.clearOf(
@@ -442,7 +441,7 @@ Outside dev mode every one of these is inert, so they cost nothing to leave in.
 - Op catalog & shader patterns → [shader-dsl-guide.md](shader-dsl-guide.md)
 - Pitfalls (Double-on-left, mip clobber, F32 vs Double) →
   [gotchas.md](gotchas.md)
-- Offline rendering, readback to pixels, screenshots, GPU selection →
+- Offscreen rendering, readback to pixels, screenshots, GPU selection →
   [painter-setup-guide.md](painter-setup-guide.md)
 - Per-symbol API → Metals `get-docs`/`inspect`, or the Scaladoc site
 - Canonical code → `examples/*`, one per feature

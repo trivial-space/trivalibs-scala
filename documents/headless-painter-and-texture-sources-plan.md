@@ -1,15 +1,16 @@
 # Headless painter, render-to-file, and texture sources
 
-**Status: Milestone 1 (M1.0–M1.4) implemented and verified, including the
-browser check of all examples by hand. Milestone 2 planned. §1–3 (Milestone 1)
-reviewed and approved; §4 onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**, not
-on-screen rendering outside the browser. Takes over the host seam and the
-headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
-`RenderHost` becomes `Surface` here); native-window hosts (Deno windows,
-NativeScript) stay a separate issue in that document, and §3.11 lists what this
-API must keep compatible with them. Also absorbs the
-`with_static_texture_data(bytes)` gap from
-[independent-todos.md](independent-todos.md).
+**Status: Milestone 1 (M1.0–M1.4) done: implemented, verified (including the
+browser check of all examples by hand), and its code reviewed in PR #3 with all
+review comments addressed (§9, 2026-10-26). Milestone 2 planned. §1–3
+(Milestone 1) reviewed and approved; §4 onward (Milestone 2) not yet reviewed.**
+Scope is **offline render to file**, not on-screen rendering outside the
+browser. Takes over the host seam and the headless phase of
+[non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its `RenderHost` becomes
+`Surface` here); native-window hosts (Deno windows, NativeScript) stay a
+separate issue in that document, and §3.11 lists what this API must keep
+compatible with them. Also absorbs the `with_static_texture_data(bytes)` gap
+from [independent-todos.md](independent-todos.md).
 
 Two milestones:
 
@@ -77,11 +78,11 @@ Takeaways:
   `create()` is referenced.~~ **Disproved in M1.3:** the process exits on its
   own on Node and Bun, with the `GPU`, painter and device still referenced, and
   `process.exit(0)` right after the last readback is clean too (§9). The
-  opposite holds instead: the `GPU` must stay referenced while its device
-  works, or node-webgpu crashes — so the painter retains it. The OS and driver
-  reclaim all GPU memory at process end. No library teardown needed for this
-  milestone; explicit freeing (`Painter.destroy()` and per-resource
-  `destroy()`) is deferred to long-running hosts, see
+  opposite holds instead: the `GPU` must stay referenced while its device works,
+  or node-webgpu crashes — so the painter retains it. The OS and driver reclaim
+  all GPU memory at process end. No library teardown needed for this milestone;
+  explicit freeing (`Painter.destroy()` and per-resource `destroy()`) is
+  deferred to long-running hosts, see
   [independent-todos.md](independent-todos.md) "GPU resources".
 - **Verification runs on node-webgpu only.** Deno's runtime is being
   discontinued ([announcement](https://deno.com/blog/cloudflare)). Even if a
@@ -273,6 +274,11 @@ inside `create` is not detection in this sense — it only separates the argumen
 that one method accepts.)
 
 ### 3.2 Painter init API
+
+> **Renamed after M1 (PR #3 review):** `Painter.create` is now the
+> `Painter.init(target, gpu, …)` / `Painter.init(target, device)` overloads, and
+> `target` also accepts a raw canvas. This section and the M1 log keep the old
+> name; see log entry 2026-10-26, item 7.
 
 Two tiers. The **standard** browser setup stays exactly as it is today. The
 **extended** setup takes the GPU from the caller: the library never looks one
@@ -1351,7 +1357,7 @@ time matters:
 
 Each step lands independently and leaves `examples/` and the sketches working.
 
-### Milestone 1 — headless painter
+### Milestone 1 — headless painter ✅ done, code reviewed (PR #3)
 
 **M1.0 — host seam.** ✅ verified in a desktop browser by hand.
 
@@ -1396,8 +1402,8 @@ Each step lands independently and leaves `examples/` and the sketches working.
   mp4 / gif via ffmpeg.
 - _Proof:_ the headless example writes an mp4 and a gif.
 
-**M1.2b — ad-hoc targets (§3.9).** ✅ verified offline and in a desktop
-browser by hand.
+**M1.2b — ad-hoc targets (§3.9).** ✅ verified offline and in a desktop browser
+by hand.
 
 - `p.showTo(panel, into)`, `p.atSize(w, h)(body)`.
 - _Proof:_ a browser example whose "4K screenshot" button downloads a PNG while
@@ -1420,8 +1426,8 @@ browser by hand.
 - _Proof:_ pixel assertions on a known render, and a recorded lifecycle result
   per runtime.
 
-**M1.4 — setup guide (§6.1).** ✅ written. Written once M1.0–M1.2b have landed, against the
-shipped API.
+**M1.4 — setup guide (§6.1).** ✅ written. Written once M1.0–M1.2b have landed,
+against the shipped API.
 
 - `docs/guide/painter-setup-guide.md`.
 - _Proof:_ every snippet in it compiles / runs, and the examples it cites exist.
@@ -1435,6 +1441,8 @@ shipped API.
   need, or the usage set (checked as coverage).
 - It fixes today's bug, where those changes after the first paint are ignored
   and the first pong layer crashes. It is also the mechanism M2.0 builds on.
+- While in `panel.scala`: drop the `_` prefix from its private fields
+  (`_textures`, `_width`, `_depthView`, …) and from `_panelIdSeq`.
 - _Proof:_ an example that toggles a pong layer and MSAA at runtime. All
   examples render unchanged.
 
@@ -1468,9 +1476,12 @@ shipped API.
 - _Proof:_ a browser example with a loaded image panel, and an offline driver
   that decodes a PNG it wrote (sharp) and feeds it back in as a `PixelImage`.
 - _Proof, roundtrip:_ `headless_triangle` grows into the full §4.5 workflow. Its
-  committed `assets/pre-rendered-triangle.png` is loaded by a second Scala
-  entry and an `index.html` in the same folder, with `WebImages.load`, and drawn
-  as a sprite texture. `build-dist.ts` already copies an example's `assets/`.
+  committed `assets/pre-rendered-triangle.png` is loaded by a second Scala entry
+  and an `index.html` in the same folder, with `WebImages.load`, and drawn as a
+  sprite texture. `build-dist.ts` already copies an example's `assets/`.
+- _Docs:_ setup guide §1.5 ("Bake to an asset") gets a short load snippet — the
+  baked file loaded back as a panel texture with `WebImages.load` (PR #3
+  review).
 
 **M2.2 — offline video input (§4.4).**
 
@@ -1564,8 +1575,7 @@ scripts and are run, not deployed.
 - `Float16Array`: Node 24.16 and Bun 1.4.2 are checked.
 - `rgba32float` capture and readback on node-webgpu's backends (Vulkan, and the
   software fallback).
-- ✅ `rgba16float` readback (M1.3 tests): exact on Intel Vulkan and on
-  llvmpipe.
+- ✅ `rgba16float` readback (M1.3 tests): exact on Intel Vulkan and on llvmpipe.
 - ✅ A non-native JS trait (`trait PixelFrames extends js.Object`) accepts a
   plain TS object literal without wrapping, and frames pushed from Scala are
   visible to the TS caller (`headless_sequence`).
@@ -1706,8 +1716,7 @@ Implemented together, in one change, because M1.1's readback is built on M1.0b's
       `render(gpu, out, frameCount, intensity, software, requireName)`;
     - the driver uses a small PNG encoder (8 and 16 bit) over `node:zlib`, in
       place of pngjs, so `webgpu` is the only dependency. It lives in
-      `examples/example_helpers/png.ts`, so the driver shows only library
-      usage;
+      `examples/example_helpers/png.ts`, so the driver shows only library usage;
     - the 16-bit output is a PNG clamped to `[0,1]`;
     - the PNGs go to the example's committed `assets/`
       (`pre-rendered-triangle.png`, `pre-rendered-triangle-16.png`), the
@@ -1751,8 +1760,8 @@ Not committed yet.
 
 - `src/graphics/painter/painter.scala`:
   - `showTo(panel, into)` and `atSize(width, height)(body)`;
-  - `paintPanel`, `width`, `height` and `onResize` follow the `atSize`
-    override (`targetWidth` / `targetHeight`);
+  - `paintPanel`, `width`, `height` and `onResize` follow the `atSize` override
+    (`targetWidth` / `targetHeight`);
   - the constructor takes the `adapter` instead of its info; `adapterInfo` is
     derived from it;
   - `retainWithDevice` keeps the `GPU` and the adapter alive with the device.
@@ -1785,25 +1794,25 @@ Not committed yet.
   validation, `atSize` sizes and `onResize` in / out.
 - `headless_sequence` on Node and Bun: 48 frames, mp4 and gif with 48 frames
   each, a 128×72 preview.
-- `screenshot`, in a desktop browser by hand: the PNG downloads while the
-  canvas keeps rendering.
+- `screenshot`, in a desktop browser by hand: the PNG downloads while the canvas
+  keeps rendering.
 - Lifecycle, 10 runs each on Node 24.16 and Bun 1.4.2: `GPU` passed inline,
-  `GPU` held globally, and `process.exit(0)` right after the render. All 60
-  exit with code 0 and no driver output.
-- Every Scala snippet in the setup guide compiles; the Scala-only variant (§3
-  of the guide) runs on Node.
+  `GPU` held globally, and `process.exit(0)` right after the render. All 60 exit
+  with code 0 and no driver output.
+- Every Scala snippet in the setup guide compiles; the Scala-only variant (§3 of
+  the guide) runs on Node.
 
 **Deviations from the plan** (§3 updated where marked):
 
-1. **`atSize` returns its body's result** (`atSize[A](w, h)(body: => A): A`),
-   so the `showTo` promise comes out of the scope. (§3.9)
+1. **`atSize` returns its body's result** (`atSize[A](w, h)(body: => A): A`), so
+   the `showTo` promise comes out of the scope. (§3.9)
 2. **`showTo` needs no `float32-filterable` for an `rgba32float` target**: the
    capture texture is a core render target, and only an `rgba32float` panel
    needs the feature.
-3. **The painter retains its `GPU` and adapter** as a JS property on the
-   device. Not planned; see the findings.
-4. **The preludes export the offline vocabulary**, including the native `GPU`
-   as a type alias. The prelude comment says why `GPU`, `WebGPU` and
+3. **The painter retains its `GPU` and adapter** as a JS property on the device.
+   Not planned; see the findings.
+4. **The preludes export the offline vocabulary**, including the native `GPU` as
+   a type alias. The prelude comment says why `GPU`, `WebGPU` and
    `PowerPreference` are the exception to "no raw facades".
 5. **M1.2b's offline proof lives in `headless_sequence`** (the preview image)
    rather than a separate example.
@@ -1814,11 +1823,11 @@ Not committed yet.
   device does not keep its instance alive. Passing `create([])` inline aborted
   the process at 256 px and above (`futex`, `pthread_mutex_lock` assertion,
   `std::system_error`) or hung it. Holding the `GPU` in a variable avoided it,
-  which is why the M1.1 driver never hit it. The painter now keeps the `GPU`
-  and adapter alive with its device; after `create(target, device)` that is the
+  which is why the M1.1 driver never hit it. The painter now keeps the `GPU` and
+  adapter alive with its device; after `create(target, device)` that is the
   caller's job (setup guide §6).
-- **The Scala.js linker drops fields that are never read.** A first attempt
-  held the adapter in a constructor `val`; the linked JS did not store it. The
+- **The Scala.js linker drops fields that are never read.** A first attempt held
+  the adapter in a constructor `val`; the linked JS did not store it. The
   retention therefore writes a JS property on the device, which the linker
   keeps.
 - **Headless Chromium cannot verify a canvas readback.** In headless Chromium
@@ -1830,6 +1839,62 @@ Not committed yet.
   in a desktop browser.
 - The gif is the bulk of the committed assets (≈750 KB at 256×144, 48 frames,
   bayer dither); the mp4 is ≈30 KB.
+
+### 2026-10-26 — PR #3 review
+
+1. **Docs say "offscreen painter" and "pixel target"**, not "offline" or
+   "container". This plan keeps "container" where it separates the target data
+   from the surface that fills it.
+2. **The painter holds `gpu` and `adapter`**, replacing the JS property on the
+   device. Both are `@JSExport` constructor vals: an exported getter is a read
+   the linker keeps (checked in the `full` link). The retention helper is gone;
+   the factories call `new Painter(…)` then `painter.initializeSurface()`, which
+   wires the surface (`Surface.configure` takes the finished painter).
+3. **`CaptureSurface` lives in `surface.scala`** and owns its one capture
+   texture; it gets the readback from `painter.ensureReadback()` during
+   `configure`, so `createOn` builds nothing by hand. `readback.scala` is
+   readback only.
+4. **`showTo` takes `cache: Boolean = true`.** The default keeps the capture
+   texture (cached on the painter) and staging buffer (pooled in `Readback`) per
+   size and format for the painter's lifetime — the usual case, fixed export
+   sizes. `cache = false` is the opt-in for freely varying sizes, where that
+   cache would grow without bound: both are allocated for the call and destroyed
+   once the pixels have landed (the texture right after submit).
+   `freeCaptureCache()` is the other way out: it destroys every cached capture
+   texture and idle staging buffer; in-flight reads hold theirs outside the pool
+   and still land. `Dict` gained native `keys` / `delete` for it.
+5. **`PixelData` sizes are pixel counts**; RGBA is fixed (`PixelData.Channels`).
+   `copyRows` moved to `PixelData`, the offset view is private to it, and
+   `rgba8unorm` is the default branch. Validation is `PixelTarget.validate`.
+6. **Class layout convention** (trivalibs `CLAUDE.md`): fields first, then
+   constructor statements, then defs public-first; `this` escapes only via a
+   setup def the factory calls after `new`. `Painter`: fields, then content
+   sections — device and surface, size (`width`/`height` replace
+   `targetWidth`/`Height`), readback, samplers, factories, rendering API, and
+   the private rendering internals last.
+7. **`create` folded into `init`.** Four overloads: `init(canvas)`,
+   `init(canvas)(setup)`, `init(target, gpu, …)` (the only one with defaults, as
+   Scala requires — hence no `(setup)` form for it) and `init(target, device)`.
+   `target` is `PixelTarget | HTMLCanvasElement | Surface`: a `Surface` by type
+   test, a pixel target by its `frames` / `data` field, anything else as a
+   canvas — never `instanceof HTMLCanvasElement`, which throws where that global
+   is missing and rejects NativeScript canvases. A raw canvas gets the `gpu`'s
+   preferred format. `WebGPU.getGPU()` checks for `navigator` first, so
+   `init(canvas)` and a device-only canvas painter no longer throw a
+   `ReferenceError` outside browsers.
+8. **Companion cleanup.** `setup` is inlined into `init(canvas)`; `make` is
+   `createPainter`, and the post-construction hook `start()` is
+   `initializeSurface()`.
+9. **`PixelTarget.validate` is public** (`where` defaults to
+   `"PixelTarget.validate"`), for targets built or received outside the painter,
+   and the prelude exports the `PixelTarget` object.
+10. **Work-binding fields keep their place**, renamed without the `_` prefix;
+    the merge helpers read them directly instead of taking them as parameters.
+    Resolving bindings per draw without them is its own plan,
+    [binding-resolution-plan.md](binding-resolution-plan.md). The `_` prefixes
+    in `panel.scala` go with M2.0a.
+
+**Review closed: M1 done.**
 
 ## Sources
 

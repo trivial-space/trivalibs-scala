@@ -6,13 +6,13 @@ import trivalibs.prelude.painter.{*, given}
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 
-/** Offline render without a DOM: the host passes a `GPU` (node-webgpu's
-  * `create([...])`) and a `PixelImage` / `PixelFrames` container, and processes
+/** Offscreen render without a DOM: the host passes a `GPU` (node-webgpu's
+  * `create([...])`) and a `PixelImage` / `PixelFrames` target, and processes
   * the pixels once the promise resolves. See `render.node.ts`.
   *
   * Shows `frameCount` frames whose tint ramps up to `intensity`, so a
   * `PixelFrames` target gets distinct frames and a `PixelImage` keeps the last
-  * one. An `intensity` above 1 survives into float containers (HDR).
+  * one. An `intensity` above 1 survives into float targets (HDR).
   */
 @JSExportTopLevel("render", moduleID = "headless_triangle")
 def render(
@@ -25,7 +25,7 @@ def render(
 ): js.Promise[Unit] =
   val format = out.asInstanceOf[PixelImage].format
   Painter
-    .create(
+    .init(
       out,
       gpu,
       forceFallbackAdapter = software,

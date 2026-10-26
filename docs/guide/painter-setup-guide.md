@@ -1,7 +1,7 @@
 # Painter Setup Guide
 
 Everything about getting a `Painter` beyond `Painter.init(canvas)`: rendering
-offline without a browser, reading pixels back into plain JS data, picking the
+offscreen without a browser, reading pixels back into plain JS data, picking the
 GPU, screenshots at another resolution, and what a render script has to do about
 process lifetime. A browser sketch needs none of this — the
 [sketch authoring guide](sketch-authoring-guide.md) covers `Painter.init`.
@@ -14,12 +14,12 @@ objects.
 
 Runnable references:
 
-| Example                       | Shows                                                          |
-| ----------------------------- | -------------------------------------------------------------- |
-| `examples/headless_triangle/` | offline still, 8- and 16-bit PNG, adapter flags, list adapters |
-| `examples/headless_sequence/` | fixed-`tpf` loop → mp4 + gif via ffmpeg, a smaller preview     |
-| `examples/screenshot/`        | 4K PNG download next to a running canvas                       |
-| `examples/example_helpers/`   | `png.ts`, `ffmpeg.ts`, `download.js`, `pixels.d.ts`            |
+| Example                       | Shows                                                            |
+| ----------------------------- | ---------------------------------------------------------------- |
+| `examples/headless_triangle/` | offscreen still, 8- and 16-bit PNG, adapter flags, list adapters |
+| `examples/headless_sequence/` | fixed-`tpf` loop → mp4 + gif via ffmpeg, a smaller preview       |
+| `examples/screenshot/`        | 4K PNG download next to a running canvas                         |
+| `examples/example_helpers/`   | `png.ts`, `ffmpeg.ts`, `download.js`, `pixels.d.ts`              |
 
 ## 1. Use cases
 
@@ -35,27 +35,27 @@ the canvas. The only library code that looks a GPU up.
 
 ### 1.2 Browser canvas with adapter options
 
-The extended entry takes the `GPU` from the caller and accepts the options of
-§2:
+The extended `init` overload takes the `GPU` from the caller and accepts the
+options of §2:
 
 ```scala
 val gpu = WebGPU.getGPU().safe
 Painter
-  .create(CanvasSurface(canvas), gpu, powerPreference = PowerPreference.HighPerformance)
+  .init(canvas, gpu, powerPreference = PowerPreference.HighPerformance)
   .map: p =>
     ...
 ```
 
-### 1.3 Offline still
+### 1.3 Offscreen still
 
-The Scala side exports a function that takes the `GPU` and a container, renders,
-and resolves once the pixels have landed:
+The Scala side exports a function that takes the `GPU` and a pixel target,
+renders, and resolves once the pixels have landed:
 
 ```scala
 @JSExportTopLevel("render")
 def render(gpu: GPU, out: PixelImage): js.Promise[Unit] =
   Painter
-    .create(out, gpu, logAdapter = true)
+    .init(out, gpu, logAdapter = true)
     .flatMap: p =>
       val panel = p.panel(clearColor = (0.2, 0.4, 0.6, 1.0))
       p.paintAndShow(panel)
@@ -80,10 +80,11 @@ await render(create([]), out)
 writeFileSync('assets/still.png', encodePng(out.width, out.height, out.data, 8))
 ```
 
-A painter created on a container uses the container's size as its surface size
-and its format as the default panel format. `show` blits into it and reads back.
+A painter created on a pixel target — an offscreen painter — uses the target's
+size as its surface size and its format as the default panel format. `show`
+blits into it and reads back.
 
-### 1.4 Offline motion sequence
+### 1.4 Offscreen motion sequence
 
 No scheduler, no `animate`: the script owns the loop and steps the animation by
 a fixed `tpf`, so the result is frame-exact whatever the GPU speed. Each `show`
@@ -93,7 +94,7 @@ appends one frame to a `PixelFrames`:
 @JSExportTopLevel("render")
 def render(gpu: GPU, out: PixelFrames, frameCount: Int): js.Promise[Unit] =
   Painter
-    .create(out, gpu)
+    .init(out, gpu)
     .flatMap: p =>
       val value = p.binding(0.0)
       val shade = p.layerShade[(value: Float)]: program =>
@@ -114,15 +115,16 @@ version, with a seamless loop.
 
 ### 1.5 Bake to an asset
 
-A texture bake is an offline still at the texture's size: same size as the
-container, so the output is exact (§5.3). Write it into the consuming sketch's
-`assets/` and load it there instead of baking at startup. A float bake uses
-`rgba16float` (or `rgba32float`, §2.3) and a raw or KTX2 file rather than a PNG.
+A texture bake is an offscreen still at the texture's size: same size as the
+pixel target, so the output is exact (§5.3). Write it into the consuming
+sketch's `assets/` and load it there instead of baking at startup. A float bake
+uses `rgba16float` (or `rgba32float`, §2.3) and a raw or KTX2 file rather than a
+PNG.
 
 ### 1.6 Screenshot next to canvas rendering
 
-Any painter, a canvas one included, can write a painted panel into a container
-with `showTo`. `atSize` repaints at another size first; inside it, panels
+Any painter, a canvas one included, can write a painted panel into a pixel
+target with `showTo`. `atSize` repaints at another size first; inside it, panels
 without a fixed size, `p.width` / `p.height` and the `onResize` callbacks all
 follow the override:
 
@@ -136,36 +138,49 @@ saved.map: image =>
 ```
 
 `atSize` returns its body's result, so the `showTo` promise comes out of the
-scope. Without `atSize`, `showTo` scales the panel to the container's size. The
-next regular `paint` reallocates the panels back to the canvas size; panels that
-carry history across frames lose it, as on a window resize. See
-`examples/screenshot/` — the PNG encoding and download are host code
-(`example_helpers/download.js`), handed to Scala as a function.
+scope. Without `atSize`, `showTo` scales the panel to the target's size. Its
+capture texture and staging buffer are cached per size and format for the
+painter's lifetime, so repeated captures allocate nothing. Where users pick
+arbitrary sizes, pass `cache = false`: both are then allocated for that call
+only and freed once the pixels have landed. Or keep the default and call
+`p.freeCaptureCache()` when done — e.g. after an export dialog closes; reads
+still in flight land regardless. The next regular `paint` reallocates the panels
+back to the canvas size; panels that carry history across frames lose it, as on
+a window resize. See `examples/screenshot/` — the PNG encoding and download are
+host code (`example_helpers/download.js`), handed to Scala as a function.
 
 ### 1.7 A painter on a device you already have
 
 ```scala
-val p = Painter.create(PixelImage(512, 512), device)
+val p = Painter.init(PixelImage(512, 512), device)
 ```
 
 Synchronous, no lookups. For adapter-level control, do the two steps by hand
-(§2.2) and pass the device. The painter then has no `adapter` / `adapterInfo`,
-and **keeping the `GPU` referenced is the caller's job** (§6).
+(§2.2) and pass the device. The painter then holds no `gpu` / `adapter`, so
+**keeping the `GPU` referenced is the caller's job** (§6).
 
 ## 2. Init API reference
 
-### 2.1 `Painter.init` and `Painter.create`
+### 2.1 `Painter.init`
 
-| Entry                            | Target                 | GPU                  | Returns               |
-| -------------------------------- | ---------------------- | -------------------- | --------------------- |
-| `Painter.init(canvas)`           | the canvas             | `navigator.gpu`      | `js.Promise[Painter]` |
-| `Painter.init(canvas)(setup)`    | the canvas             | `navigator.gpu`      | `js.Promise[Unit]`    |
-| `Painter.create(target, gpu, …)` | container or `Surface` | caller's `GPU`       | `js.Promise[Painter]` |
-| `Painter.create(target, device)` | container or `Surface` | caller's `GPUDevice` | `Painter`             |
+| Entry                          | Target                          | GPU                  | Returns               |
+| ------------------------------ | ------------------------------- | -------------------- | --------------------- |
+| `Painter.init(canvas)`         | the canvas                      | `navigator.gpu`      | `js.Promise[Painter]` |
+| `Painter.init(canvas)(setup)`  | the canvas                      | `navigator.gpu`      | `js.Promise[Unit]`    |
+| `Painter.init(target, gpu, …)` | pixel target, canvas, `Surface` | caller's `GPU`       | `js.Promise[Painter]` |
+| `Painter.init(target, device)` | pixel target, canvas, `Surface` | caller's `GPUDevice` | `Painter`             |
 
-`target` is a `PixelFrames` / `PixelImage` (offline: `show` reads back into it)
-or a `Surface`, in practice `CanvasSurface(canvas)` (optionally
-`CanvasSurface(canvas, format = …)`). Options of `create(target, gpu, …)`:
+Only `init(canvas)` looks the GPU up for its adapter and device. One smaller
+lookup remains: a raw canvas passed to `init(canvas, device)` reads
+`navigator.gpu` for its preferred format (`bgra8unorm` where there is none) —
+pass `CanvasSurface(canvas, format = …)` to skip it. `target` is a `PixelFrames`
+/ `PixelImage` (offscreen: `show` reads back into it), a canvas, or a `Surface`
+— `CanvasSurface(canvas, format = …)` for a canvas format other than the
+preferred one. A target with a `frames` or `data` field is taken as a pixel
+target; anything else that is not a `Surface` as a canvas, so a non-DOM canvas
+(e.g. NativeScript) works too. The `gpu` overload has no `(setup)` form — Scala
+allows default arguments on only one overload — so chain on its promise. Options
+of `init(target, gpu, …)`:
 
 | Option                 | Default | Effect                                                                      |
 | ---------------------- | ------- | --------------------------------------------------------------------------- |
@@ -176,9 +191,10 @@ or a `Surface`, in practice `CanvasSurface(canvas)` (optionally
 | `requiredLimits`       | none    | device limits object                                                        |
 | `logAdapter`           | `false` | prints `WebGPU adapter: vendor / architecture / device / description` once  |
 
-`create` validates a container right away and throws on an unknown format, a
+`init` validates a pixel target right away and throws on an unknown format, a
 non-positive size, a `frames` that is not an array, or `data` of the wrong array
-type or length.
+type or length. The same check is public as `PixelTarget.validate(target)`, for
+targets built or received outside the painter.
 
 ### 2.2 `WebGPU` helpers
 
@@ -186,7 +202,7 @@ type or length.
 WebGPU
   .requestAdapter(gpu, requireAdapter = WebGPU.adapterNamed("nvidia"))
   .flatMap(a => WebGPU.requestDevice(a, requiredFeatures = Arr("float32-filterable")))
-  .map(device => Painter.create(PixelFrames(1024, 1024), device))
+  .map(device => Painter.init(PixelFrames(1024, 1024), device))
 ```
 
 - `WebGPU.requestAdapter(gpu, powerPreference, forceFallbackAdapter, requireAdapter, logAdapter)`
@@ -197,26 +213,27 @@ WebGPU
 
 ### 2.3 Feature-dependent setups
 
-**`rgba32float` output needs `float32-filterable`.** On an `rgba32float`
-container panels default to `rgba32float`, and the `show` blit samples them with
-a filtering sampler. Pass `requiredFeatures = Arr("float32-filterable")`; every
-desktop GPU offers it. Without it `create` throws right away with that hint.
-Where the feature is missing, use `rgba16float`. `showTo` into an `rgba32float`
-container needs nothing extra — only an `rgba32float` _panel_ needs the feature.
+**`rgba32float` output needs `float32-filterable`.** On an `rgba32float` pixel
+target panels default to `rgba32float`, and the `show` blit samples them with a
+filtering sampler. Pass `requiredFeatures = Arr("float32-filterable")`; every
+desktop GPU offers it. Without it `init` throws right away with that hint. Where
+the feature is missing, use `rgba16float`. `showTo` into an `rgba32float` target
+needs nothing extra — only an `rgba32float` _panel_ needs the feature.
 
 ### 2.4 What the painter holds
 
-| Member            | What                                                                 |
-| ----------------- | -------------------------------------------------------------------- |
-| `device`, `queue` | the device                                                           |
-| `surface`         | `CanvasSurface`, or the internal capture surface of a container      |
-| `adapter`         | the adapter it was created from; null after `create(target, device)` |
-| `adapterInfo`     | its `GPUAdapterInfo`; null after `create(target, device)`            |
-| `preferredFormat` | the surface format: default panel format and `show` target           |
-| `width`, `height` | the target size: the surface's, or the `atSize` override             |
-| `canvas`          | the canvas; throws on a container painter                            |
+| Member            | What                                                               |
+| ----------------- | ------------------------------------------------------------------ |
+| `device`, `queue` | the device                                                         |
+| `surface`         | `CanvasSurface`, or the internal capture surface of a pixel target |
+| `gpu`             | the `GPU` it was created from; null after `init(target, device)`   |
+| `adapter`         | the adapter it was created from; null after `init(target, device)` |
+| `adapterInfo`     | its `GPUAdapterInfo`; null after `init(target, device)`            |
+| `preferredFormat` | the surface format: default panel format and `show` target         |
+| `width`, `height` | the target size: the surface's, or the `atSize` override           |
+| `canvas`          | the canvas; throws on an offscreen painter                         |
 
-It also keeps the `GPU` and the adapter alive as long as its device lives (§6).
+Holding `gpu` and `adapter` keeps them alive as long as the painter (§6).
 
 ## 3. Getting a `GPU` per runtime
 
@@ -242,7 +259,7 @@ bun examples/headless_sequence/render.node.ts
 ```
 
 Doing it all in Scala instead is equally valid — import `create` and build the
-container there:
+pixel target there:
 
 ```scala
 @js.native
@@ -253,7 +270,7 @@ def createGpu(options: js.Array[String]): GPU = js.native
 def main(): js.Promise[Unit] =
   val out = PixelImage(256, 256)
   Painter
-    .create(out, createGpu(Arr()))
+    .init(out, createGpu(Arr()))
     .flatMap: p =>
       p.paintAndShow(p.panel(clearColor = (1.0, 0.5, 0.0, 1.0)))
       p.awaitReadback()
@@ -299,7 +316,7 @@ the runtime starts:
 **Painter level — verify, don't trust.**
 `requireAdapter = WebGPU.adapterNamed("nvidia")` rejects the promise with the
 adapter that was found, so a render never silently runs on llvmpipe.
-`logAdapter = true` prints it; the offline examples keep it on.
+`logAdapter = true` prints it; the headless examples keep it on.
 
 | Symptom                        | Check                                                                       |
 | ------------------------------ | --------------------------------------------------------------------------- |
@@ -353,7 +370,7 @@ interface PixelImage {
 ### 5.3 Layout and conversion
 
 Rows tightly packed (no row padding), **top row first**, RGBA, straight alpha,
-length `width · height · 4`. A panel the size of its container comes out exact.
+length `width · height · 4`. A panel the size of its target comes out exact.
 Another size is scaled (nearest sampling), another format converted: floats
 never clamp, `rgba8unorm` clamps to `[0,1]`. An HDR chain needs float panels
 throughout — on a canvas painter panels default to the canvas format, so give
@@ -362,7 +379,7 @@ them an explicit float format before an HDR `showTo`.
 ### 5.4 When the data is there
 
 - **`p.awaitReadback()`** resolves once every pending readback has landed,
-  `showTo`'s included. **A container is complete only then**; before, its
+  `showTo`'s included. **A pixel target is complete only then**; before, its
   contents are undefined. With nothing pending it resolves immediately.
 - **`p.showTo(panel, into)`** resolves with `into` once its own readback has
   landed; it does not wait for others.
@@ -397,10 +414,10 @@ Verified on Node 24.16 and Bun 1.4.2 with node-webgpu 0.6.2:
 - **The `GPU` must stay alive while the device is in use.** Dawn's device does
   not keep its instance alive; once the `GPU` object is garbage-collected,
   node-webgpu aborts the process (`futex`, `pthread_mutex_lock` or
-  `std::system_error` crashes). A painter from `create(target, gpu, …)` or
-  `init` keeps the `GPU` and its adapter alive with its device, so
-  `render(create([]), out)` is safe. After `create(target, device)` the caller
-  has to keep the `GPU` referenced.
+  `std::system_error` crashes). A painter from `init(target, gpu, …)` or
+  `init(canvas)` holds the `GPU` and its adapter (`p.gpu`, `p.adapter`), so
+  `render(create([]), out)` is safe while the painter is in use. After
+  `init(target, device)` the caller has to keep the `GPU` referenced.
 
 There is no `destroy()` yet. GPU memory is reclaimed at process end, which is
 all render-and-exit scripts need; explicit freeing for long-running hosts is

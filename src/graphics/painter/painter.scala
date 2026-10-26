@@ -17,6 +17,7 @@ import trivalibs.utils.js.*
 
 import scala.compiletime.erasedValue
 import scala.scalajs.js
+import scala.scalajs.js.annotation.JSExport
 
 private val LAYER_VERT_BODY =
   """  let x = f32((in.vertex_index << 1u) & 2u) * 2.0 - 1.0;
@@ -70,13 +71,13 @@ fn fs_main(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
 
 /** Central registry and frame driver for WebGPU rendering.
   *
-  * A `Painter` owns the GPU device and a [[Surface]] (a browser canvas, or a
-  * [[PixelFrames]] / [[PixelImage]] container offline), and is the factory for
-  * every rendering resource: [[shade]]/[[layerShade]] (shaders), [[form]]
-  * (geometry), [[shape]] (drawable), [[layer]] (full-screen post-processing
-  * pass), [[panel]] (render target), [[binding]] (uniform buffers) and
-  * samplers. Per frame you call [[paint]] to render panels off-screen and
-  * [[show]] to present one to the surface.
+  * A `Painter` owns the GPU device and a [[Surface]] (a browser canvas, or — on
+  * an offscreen painter — a [[PixelFrames]] / [[PixelImage]]), and is the
+  * factory for every rendering resource: [[shade]]/[[layerShade]] (shaders),
+  * [[form]] (geometry), [[shape]] (drawable), [[layer]] (full-screen
+  * post-processing pass), [[panel]] (render target), [[binding]] (uniform
+  * buffers) and samplers. Per frame you call [[paint]] to render panels
+  * off-screen and [[show]] to present one to the surface.
   *
   * Don't construct directly — use [[Painter.init]] in the browser, which sets
   * up the device and runs your code inside a ready painter:
@@ -88,7 +89,8 @@ fn fs_main(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
   *     painter.paint(panel)
   *     painter.show(panel)
   * }}}
-  * Offline, or with a caller-supplied GPU, use [[Painter.create]].
+  * Offscreen, or with a caller-supplied GPU or device, use the `init(target,
+  * gpu, …)` / `init(target, device)` overloads.
   */
 class Painter private[painter] (
     val device: GPUDevice,
@@ -96,8 +98,18 @@ class Painter private[painter] (
     /** The adapter this painter's device came from; null when the painter was
       * handed a device.
       */
-    val adapter: Opt[GPUAdapter],
+    @JSExport val adapter: Opt[GPUAdapter],
+    /** The `GPU` this painter's device came from; null when the painter was
+      * handed a device. Dawn's device does not keep its `GPU` alive, and
+      * node-webgpu crashes once that is collected mid-render, so the painter
+      * holds it. Exported because the linker drops fields that are never read.
+      */
+    @JSExport val gpu: Opt[GPU],
 ):
+  // =========================================================================
+  // State
+  // =========================================================================
+
   val queue: GPUQueue = device.queue
 
   /** [[adapter]]'s info; null when the painter was handed a device. */
@@ -107,32 +119,82 @@ class Painter private[painter] (
   /** The surface's format: the default panel format and the `show` target. */
   val preferredFormat: TextureFormat = surface.format
 
-  private val pipelineCache = Dict[GPURenderPipeline]()
   private var nextShadeId = 0
+
   private val resizeCallbacks = Arr[(Double, Double) => Unit]()
-  private var readback: Opt[Readback] = null
   // `atSize` override of the target size; 0 = none, follow the surface.
   private var overrideWidth = 0
   private var overrideHeight = 0
 
-  surface.onResize((w, h) => fireResize(w, h))
+  private val pipelineCache = Dict[GPURenderPipeline]()
+  private val blitPipelines = Dict[GPURenderPipeline]()
+  // Working buffers for binding merge (reusable, single-threaded JS).
+  private val workBindings: BindingSlots = Arr()
+  private val workPanelBindings: Arr[Opt[PanelBinding]] = Arr()
 
-  private def targetWidth: Int =
-    if overrideWidth > 0 then overrideWidth else surface.width
+  private var readback: Opt[Readback] = null
+  // `showTo` capture textures, one per size and format.
+  private val captureTextures = Dict[GPUTexture]()
 
-  private def targetHeight: Int =
-    if overrideHeight > 0 then overrideHeight else surface.height
+  // =========================================================================
+  // Device and surface
+  // =========================================================================
 
   /** The browser canvas this painter presents to. Throws on a painter without a
-    * [[CanvasSurface]] (offline containers).
+    * [[CanvasSurface]] (offscreen painters).
     */
   def canvas: HTMLCanvasElement = surface match
     case s: CanvasSurface => s.canvas
     case _ => throw jsError("Painter.canvas: this painter has no canvas")
 
-  private[painter] def ensureReadback(): Readback =
-    if readback.isNull then readback = Readback(device)
-    readback.get
+  /** Convenience: set up a `CanvasInput` for this painter's canvas with the
+    * interactive-canvas defaults (focusable, cleared outline, focus on
+    * pointer-down, initial focus) and the default drag/hold gesture preset. See
+    * `interactiveCanvas`.
+    */
+  def input(
+      initialFocus: Boolean = true,
+      holdDelay: Double = 400.0,
+      holdRadius: Double = 5.0,
+      suppressContextMenu: Boolean = true,
+      onActivity: Maybe[js.Function0[Unit]] = Maybe.Not,
+      dragGlideHalfLife: Double = 90.0,
+      dragGlideMinSpeed: Double = 50.0,
+  ): CanvasInput =
+    interactiveCanvas(
+      canvas,
+      initialFocus,
+      holdDelay,
+      holdRadius,
+      suppressContextMenu,
+      onActivity,
+      dragGlideHalfLife,
+      dragGlideMinSpeed,
+    )
+
+  // Wires the painter to its surface. Called by the factories right after
+  // construction, so `this` never escapes half-built.
+  private[painter] def initializeSurface(): Unit =
+    surface.configure(this)
+    surface.onResize((w, h) => fireResize(w, h))
+
+  // =========================================================================
+  // Size
+  // =========================================================================
+
+  /** Current target width in physical pixels: the surface's, or the [[atSize]]
+    * override inside one. `Double`, to match [[onResize]] — sizes are almost
+    * always used in ratios and float math.
+    */
+  def width: Double =
+    if overrideWidth > 0 then overrideWidth else surface.width
+
+  /** Current target height in physical pixels: the surface's, or the [[atSize]]
+    * override inside one. `Double`, to match [[onResize]] — sizes are almost
+    * always used in ratios and float math.
+    */
+  def height: Double =
+    if overrideHeight > 0 then overrideHeight else surface.height
 
   /** Register a callback invoked with `(width, height)` **immediately** (with
     * the current target size) and again on every surface resize, and on entry
@@ -141,25 +203,7 @@ class Painter private[painter] (
     */
   def onResize(cb: (Double, Double) => Unit): Unit =
     resizeCallbacks.push(cb)
-    cb(targetWidth, targetHeight)
-
-  private[painter] def fireResize(w: Double, h: Double): Unit =
-    var k = 0
-    while k < resizeCallbacks.length do
-      resizeCallbacks(k)(w, h)
-      k += 1
-
-  /** Current target width in physical pixels: the surface's, or the
-    * [[atSize]] override inside one. `Double`, to match [[onResize]] — sizes
-    * are almost always used in ratios and float math.
-    */
-  def width: Double = targetWidth
-
-  /** Current target height in physical pixels: the surface's, or the
-    * [[atSize]] override inside one. `Double`, to match [[onResize]] — sizes
-    * are almost always used in ratios and float math.
-    */
-  def height: Double = targetHeight
+    cb(width, height)
 
   /** Runs `body` with the target size overridden to `width` × `height`: panels
     * without their own size are painted at it, [[width]] / [[height]] report
@@ -189,40 +233,69 @@ class Painter private[painter] (
     finally
       overrideWidth = prevWidth
       overrideHeight = prevHeight
-      fireResize(targetWidth, targetHeight)
+      fireResize(this.width, this.height)
 
-  /** Resolves once every pending readback has landed in its container; only
-    * then is a [[PixelFrames]] / [[PixelImage]] target complete. Not a step of
-    * normal rendering: with nothing to read back it resolves immediately.
+  private def fireResize(w: Double, h: Double): Unit =
+    var k = 0
+    while k < resizeCallbacks.length do
+      resizeCallbacks(k)(w, h)
+      k += 1
+
+  // =========================================================================
+  // Readback
+  // =========================================================================
+
+  /** Frees what [[showTo]] caches: the capture texture of every size and format
+    * used so far, and the idle staging buffers. Readbacks in flight still land;
+    * later calls allocate anew. An offscreen painter's own capture texture is
+    * kept.
+    */
+  def freeCaptureCache(): Unit =
+    val keys = captureTextures.keys
+    var k = 0
+    while k < keys.length do
+      captureTextures.at(keys(k)).destroy()
+      captureTextures.delete(keys(k))
+      k += 1
+    if readback.notNull then readback.get.freeStaging()
+
+  /** Resolves once every pending readback has landed in its [[PixelTarget]];
+    * only then is the target complete. Not a step of normal rendering: with
+    * nothing to read back it resolves immediately.
     */
   def awaitReadback(): js.Promise[Unit] =
     if readback.isNull then js.Promise.resolve[Unit](())
     else readback.get.awaitAll()
 
-  /** Convenience: set up a `CanvasInput` for this painter's canvas with the
-    * interactive-canvas defaults (focusable, cleared outline, focus on
-    * pointer-down, initial focus) and the default drag/hold gesture preset. See
-    * `interactiveCanvas`.
-    */
-  def input(
-      initialFocus: Boolean = true,
-      holdDelay: Double = 400.0,
-      holdRadius: Double = 5.0,
-      suppressContextMenu: Boolean = true,
-      onActivity: Maybe[js.Function0[Unit]] = Maybe.Not,
-      dragGlideHalfLife: Double = 90.0,
-      dragGlideMinSpeed: Double = 50.0,
-  ): CanvasInput =
-    interactiveCanvas(
-      canvas,
-      initialFocus,
-      holdDelay,
-      holdRadius,
-      suppressContextMenu,
-      onActivity,
-      dragGlideHalfLife,
-      dragGlideMinSpeed,
+  private[painter] def ensureReadback(): Readback =
+    if readback.isNull then readback = Readback(device)
+    readback.get
+
+  private def createCaptureTexture(
+      width: Int,
+      height: Int,
+      format: PixelFormat,
+  ): GPUTexture =
+    device.createTexture(
+      Obj.literal(
+        size = Obj.literal(width = width, height = height),
+        format = format.toJs,
+        usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      ),
     )
+
+  private def cachedCaptureTexture(
+      width: Int,
+      height: Int,
+      format: PixelFormat,
+  ): GPUTexture =
+    val key = s"$width|$height|${format.toJs}"
+    val cached = captureTextures.at(key)
+    if !js.isUndefined(cached.asInstanceOf[js.Any]) then cached
+    else
+      val texture = createCaptureTexture(width, height, format)
+      captureTextures.set(key, texture)
+      texture
 
   // =========================================================================
   // Shared samplers
@@ -863,8 +936,8 @@ class Painter private[painter] (
     * painter.draw(shape2) // blends over shape1
     * }}}
     * For multi-pass / off-screen rendering use [[panel]] + [[paint]] +
-    * [[show]]. On a container painter `draw` output is not read back; draw into
-    * a panel and `show` it instead.
+    * [[show]]. On an offscreen painter `draw` output is not read back; draw
+    * into a panel and `show` it instead.
     */
   def draw(
       shape: AnyShape,
@@ -902,8 +975,245 @@ class Painter private[painter] (
   // paint() / show() — Panel-based rendering
   // =========================================================================
 
+  /** Render one or more [[Panel]]s off-screen, in argument order. Each panel
+    * draws its shapes then runs its layers into its own texture(s); nothing is
+    * presented to the canvas — call [[show]] for that. Pass panels in
+    * dependency order when later panels sample earlier ones (e.g.
+    * `paint(scene, bloom, canvas)`). This is the varargs form; concrete-arity
+    * overloads (1–12) exist for the hot path to avoid varargs allocation.
+    */
+  def paint(panels: Panel*): Unit =
+    var i = 0
+    while i < panels.length do
+      paintPanel(panels(i))
+      i += 1
+
+  // Concrete-arity overloads for the hot path — avoid the Scala varargs
+  // pipeline (`ScalaRunTime.wrapRefArray` → `Seq` → `toJSVarArgsImpl`) so a
+  // typical per-frame `paint(a, b, …)` call stays allocation-free.
+  inline def paint(a: Panel): Unit =
+    paintPanel(a)
+  inline def paint(a: Panel, b: Panel): Unit =
+    paintPanel(a)
+    paintPanel(b)
+  inline def paint(a: Panel, b: Panel, c: Panel): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+  inline def paint(a: Panel, b: Panel, c: Panel, d: Panel): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+  inline def paint(a: Panel, b: Panel, c: Panel, d: Panel, e: Panel): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+      g: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+    paintPanel(g)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+      g: Panel,
+      h: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+    paintPanel(g)
+    paintPanel(h)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+      g: Panel,
+      h: Panel,
+      i: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+    paintPanel(g)
+    paintPanel(h)
+    paintPanel(i)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+      g: Panel,
+      h: Panel,
+      i: Panel,
+      j: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+    paintPanel(g)
+    paintPanel(h)
+    paintPanel(i)
+    paintPanel(j)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+      g: Panel,
+      h: Panel,
+      i: Panel,
+      j: Panel,
+      k: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+    paintPanel(g)
+    paintPanel(h)
+    paintPanel(i)
+    paintPanel(j)
+    paintPanel(k)
+  inline def paint(
+      a: Panel,
+      b: Panel,
+      c: Panel,
+      d: Panel,
+      e: Panel,
+      f: Panel,
+      g: Panel,
+      h: Panel,
+      i: Panel,
+      j: Panel,
+      k: Panel,
+      l: Panel,
+  ): Unit =
+    paintPanel(a)
+    paintPanel(b)
+    paintPanel(c)
+    paintPanel(d)
+    paintPanel(e)
+    paintPanel(f)
+    paintPanel(g)
+    paintPanel(h)
+    paintPanel(i)
+    paintPanel(j)
+    paintPanel(k)
+    paintPanel(l)
+
+  /** Present an already-[[paint]]ed panel's output to the surface. Typically
+    * the last call each frame: `paint(...)` then `show(finalPanel)`.
+    *
+    * On a canvas painter this blits to the canvas. On an offscreen painter it
+    * reads back right away: one frame appended to a [[PixelFrames]], or a
+    * [[PixelImage]]'s `data` overwritten — complete once [[awaitReadback]]
+    * resolves. The blit samples the panel, so a panel of another size is scaled
+    * and one of another format converted; at equal size it is exact.
+    */
+  def show(panel: Panel): Unit =
+    val encoder = device.createCommandEncoder()
+    blitInto(encoder, panel, surface.currentTexture(), preferredFormat)
+    surface.present(encoder)
+
+  /** Write an already-[[paint]]ed panel into `into`, by the same rules as
+    * [[show]] on an offscreen painter: one frame appended to a [[PixelFrames]],
+    * or a [[PixelImage]]'s `data` overwritten. Works on any painter, canvas
+    * ones included — screenshots, a second resolution or format, a bake
+    * download. The panel is scaled to `into`'s size; combine with [[atSize]] to
+    * render at that size instead.
+    *
+    * Reads back right away and resolves with `into` once this readback has
+    * landed, so no [[awaitReadback]] is needed. Other readbacks still in flight
+    * are not awaited. An `rgba32float` panel needs the `float32-filterable`
+    * device feature; an `rgba32float` `into` does not.
+    *
+    * `cache` keeps the capture texture and staging buffer for the next `showTo`
+    * of the same size and format, for the painter's lifetime. Pass `false` for
+    * sizes that vary freely (user-chosen export sizes): both are then allocated
+    * for this call only and destroyed once the pixels have landed.
+    * [[freeCaptureCache]] empties the cache at any time.
+    */
+  def showTo[T <: PixelTarget](
+      panel: Panel,
+      into: T,
+      cache: Boolean = true,
+  ): js.Promise[T] =
+    val image = into.asInstanceOf[PixelImage]
+    PixelTarget.validate(into, "Painter.showTo")
+    val texture =
+      if cache then
+        cachedCaptureTexture(image.width, image.height, image.format)
+      else createCaptureTexture(image.width, image.height, image.format)
+    val encoder = device.createCommandEncoder()
+    blitInto(encoder, panel, texture, image.format.textureFormat)
+    val landed = ensureReadback().read(encoder, texture, into, pooled = cache)
+    // Already submitted; the GPU finishes the copy before freeing.
+    if !cache then texture.destroy()
+    landed.map(_ => into)
+
+  /** Convenience: [[paint]] then [[show]] a single panel. Use the separate
+    * calls when you paint several panels before presenting one.
+    */
+  def paintAndShow(p: Panel): Unit =
+    paint(p)
+    show(p)
+  // =========================================================================
+  // Panel painting — one panel per call, shared by every paint overload
+  // =========================================================================
+
   private def paintPanel(panel: Panel): Unit =
-    panel.ensureSize(targetWidth, targetHeight)
+    panel.ensureSize(width.toInt, height.toInt)
     val msaa = panel.multisample
 
     // Step 1: render shapes into main texture(s)
@@ -1098,224 +1408,412 @@ class Painter private[painter] (
     if panel.mipLevelCount > 1 && !hasMipTargetLayers then
       generateMipmaps(panel)
 
-  /** Render one or more [[Panel]]s off-screen, in argument order. Each panel
-    * draws its shapes then runs its layers into its own texture(s); nothing is
-    * presented to the canvas — call [[show]] for that. Pass panels in
-    * dependency order when later panels sample earlier ones (e.g.
-    * `paint(scene, bloom, canvas)`). This is the varargs form; concrete-arity
-    * overloads (1–12) exist for the hot path to avoid varargs allocation.
-    */
-  def paint(panels: Panel*): Unit =
+  // =========================================================================
+  // Per-shape render pass helper (shared by draw() and paint())
+  // =========================================================================
+
+  private def renderShapeOnPass(
+      pass: GPURenderPassEncoder,
+      shape: AnyShape,
+      depthTest: Boolean = false,
+      multisample: Boolean = false,
+      formats: Arr[TextureFormat] = null,
+      panel: Opt[Panel] = null,
+  ): Unit =
+    val fmts = if formats != null then formats else Arr(preferredFormat)
+    val pipeline = getPipeline(
+      shape.shade,
+      shape.blendState,
+      fmts,
+      depthTest,
+      multisample,
+      shape.form.topology,
+      shape.cullMode,
+      shape.form.frontFace,
+      shape.form.indexFormat,
+    )
+
+    pass.setPipeline(pipeline)
+
+    val form = shape.form
+    val bufferCount = form.activeBuffers
+    val instanceCount = shape.instances.length
+    val hasPanelBinds = hasPanelRuntimeBindings(panel)
+
+    // A form can hold several geometry buffers (e.g. the fragments of a split
+    // polyline); they are drawn in sequence sharing pipeline and bind groups.
+    inline def drawCall(): Unit =
+      var b = 0
+      while b < bufferCount do
+        val buf = form.buffers(b)
+        if buf.vertexCount > 0 then
+          pass.setVertexBuffer(
+            0,
+            buf.vertexBuffer.get,
+            0.0,
+            buf.vertexBufferCurrentSize,
+          )
+          if buf.indexCount > 0 then
+            pass.setIndexBuffer(
+              buf.indexBuffer.get,
+              buf.indexFormat,
+              0.0,
+              buf.indexBufferCurrentSize,
+            )
+            pass.drawIndexed(buf.indexCount)
+          else pass.draw(buf.vertexCount)
+        b += 1
+
+    if instanceCount == 0 then
+      if hasPanelBinds then
+        copyToWork(shape.bindings, shape.panelBindings)
+        applyPanelRuntimeBindings(panel, shape.shade)
+        setValueBindGroup(pass, shape.shade, workBindings)
+        setPanelBindGroup(pass, shape.shade, workPanelBindings)
+      else
+        setValueBindGroup(pass, shape.shade, shape.bindings)
+        setPanelBindGroup(pass, shape.shade, shape.panelBindings)
+      drawCall()
+    else
+      var i = 0
+      while i < instanceCount do
+        val inst = shape.instances.items(i)
+        copyToWork(shape.bindings, shape.panelBindings)
+        if hasPanelBinds then applyPanelRuntimeBindings(panel, shape.shade)
+        applyInstanceBindings(inst)
+        setValueBindGroup(pass, shape.shade, workBindings)
+        setPanelBindGroup(pass, shape.shade, workPanelBindings)
+        drawCall()
+        i += 1
+
+  // =========================================================================
+  // Per-layer render pass helper
+  // =========================================================================
+
+  private def renderLayerOnPass(
+      pass: GPURenderPassEncoder,
+      layer: AnyLayer,
+      depthTest: Boolean = false,
+      multisample: Boolean = false,
+      formats: Arr[TextureFormat] = null,
+      srcView: Opt[GPUTextureView] = null,
+      panel: Opt[Panel] = null,
+  ): Unit =
+    val fmts = if formats != null then formats else Arr(preferredFormat)
+    val pipeline = getPipeline(
+      layer.shade,
+      layer.blendState,
+      fmts,
+      depthTest,
+      multisample,
+    )
+
+    pass.setPipeline(pipeline)
+
+    val instanceCount = layer.instances.length
+    val hasPanelBinds = hasPanelRuntimeBindings(panel)
+
+    if instanceCount == 0 then
+      if hasPanelBinds then
+        // Dynamic path: panel runtime overrides merged per draw — not cached.
+        copyToWork(layer.bindings, layer.panelBindings)
+        applyPanelRuntimeBindings(panel, layer.shade)
+        setValueBindGroup(pass, layer.shade, workBindings)
+        val effectiveSrcView =
+          if workPanelBindings.length > 0 && workPanelBindings(0).notNull
+          then null
+          else srcView
+        setPanelBindGroup(
+          pass,
+          layer.shade,
+          workPanelBindings,
+          effectiveSrcView,
+        )
+      else
+        // Static path: cacheable by (panelId, epoch). A hit skips the
+        // work-buffer copy + GPU bind-group build; a mismatch (or first draw)
+        // rebuilds and re-stores, dropping any stale entry.
+        val c = layer.cache
+        if c.notNull && panel.notNull
+          && c.panelId == panel.panelId && c.epoch == panel.bindEpoch
+        then
+          if c.valueGroup.notNull then pass.setBindGroup(0, c.valueGroup)
+          if c.panelGroup.notNull then pass.setBindGroup(1, c.panelGroup)
+        else
+          val vg = buildValueBindGroup(layer.shade, layer.bindings)
+          val pg =
+            buildPanelBindGroup(layer.shade, layer.panelBindings, srcView)
+          if vg.notNull then pass.setBindGroup(0, vg)
+          if pg.notNull then pass.setBindGroup(1, pg)
+          layer.cache =
+            if panel.notNull then
+              LayerBindCache(panel.panelId, panel.bindEpoch, vg, pg)
+            else null
+      pass.draw(3)
+    else
+      var i = 0
+      while i < instanceCount do
+        val inst = layer.instances.items(i)
+        copyToWork(layer.bindings, layer.panelBindings)
+        if hasPanelBinds then applyPanelRuntimeBindings(panel, layer.shade)
+        applyInstanceBindings(inst)
+        setValueBindGroup(pass, layer.shade, workBindings)
+        val effectiveSrcView =
+          if workPanelBindings.length > 0 && workPanelBindings(0).notNull
+          then null
+          else srcView
+        setPanelBindGroup(
+          pass,
+          layer.shade,
+          workPanelBindings,
+          effectiveSrcView,
+        )
+        pass.draw(3)
+        i += 1
+
+  // =========================================================================
+  // Binding merge into the working buffers
+  // =========================================================================
+
+  private def copyToWork(
+      bindings: BindingSlots,
+      panelBindings: Arr[Opt[PanelBinding]],
+  ): Unit =
+    workBindings.length = bindings.length
     var i = 0
-    while i < panels.length do
-      paintPanel(panels(i))
+    while i < bindings.length do
+      workBindings(i) = bindings(i)
+      i += 1
+    workPanelBindings.length = panelBindings.length
+    var j = 0
+    while j < panelBindings.length do
+      workPanelBindings(j) = panelBindings(j)
+      j += 1
+
+  private def applyPanelRuntimeBindings(
+      panel: Panel,
+      shade: Shade[?, ?],
+  ): Unit =
+    val dict = panel.runtimeBindings
+    val keys =
+      js.Object.keys(dict.asInstanceOf[js.Object]).asInstanceOf[Arr[String]]
+    var i = 0
+    while i < keys.length do
+      val name = keys(i)
+      val value = dict.at(name)
+      if shade.uniformIndices.has(name) then
+        val idx = shade.uniformIndices.at(name)
+        if idx >= workBindings.length || workBindings(idx) == null then
+          while workBindings.length <= idx do workBindings.push(null)
+          workBindings(idx) =
+            value.asInstanceOf[BufferBinding[?, ?] | GPUSampler]
+      else if shade.panelIndices.has(name) then
+        val idx = shade.panelIndices.at(name)
+        if idx >= workPanelBindings.length || workPanelBindings(idx).isNull then
+          while workPanelBindings.length <= idx do workPanelBindings.push(null)
+          val pb =
+            if value.isInstanceOf[PanelBinding] then
+              value.asInstanceOf[PanelBinding]
+            else PanelBinding(value.asInstanceOf[Panel])
+          workPanelBindings(idx) = pb
       i += 1
 
-  // Concrete-arity overloads for the hot path — avoid the Scala varargs
-  // pipeline (`ScalaRunTime.wrapRefArray` → `Seq` → `toJSVarArgsImpl`) so a
-  // typical per-frame `paint(a, b, …)` call stays allocation-free.
-  inline def paint(a: Panel): Unit =
-    paintPanel(a)
-  inline def paint(a: Panel, b: Panel): Unit =
-    paintPanel(a)
-    paintPanel(b)
-  inline def paint(a: Panel, b: Panel, c: Panel): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-  inline def paint(a: Panel, b: Panel, c: Panel, d: Panel): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-  inline def paint(a: Panel, b: Panel, c: Panel, d: Panel, e: Panel): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-      g: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-    paintPanel(g)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-      g: Panel,
-      h: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-    paintPanel(g)
-    paintPanel(h)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-      g: Panel,
-      h: Panel,
-      i: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-    paintPanel(g)
-    paintPanel(h)
-    paintPanel(i)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-      g: Panel,
-      h: Panel,
-      i: Panel,
-      j: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-    paintPanel(g)
-    paintPanel(h)
-    paintPanel(i)
-    paintPanel(j)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-      g: Panel,
-      h: Panel,
-      i: Panel,
-      j: Panel,
-      k: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-    paintPanel(g)
-    paintPanel(h)
-    paintPanel(i)
-    paintPanel(j)
-    paintPanel(k)
-  inline def paint(
-      a: Panel,
-      b: Panel,
-      c: Panel,
-      d: Panel,
-      e: Panel,
-      f: Panel,
-      g: Panel,
-      h: Panel,
-      i: Panel,
-      j: Panel,
-      k: Panel,
-      l: Panel,
-  ): Unit =
-    paintPanel(a)
-    paintPanel(b)
-    paintPanel(c)
-    paintPanel(d)
-    paintPanel(e)
-    paintPanel(f)
-    paintPanel(g)
-    paintPanel(h)
-    paintPanel(i)
-    paintPanel(j)
-    paintPanel(k)
-    paintPanel(l)
+  private def applyInstanceBindings(inst: Instance[?, ?]): Unit =
+    var i = 0
+    while i < inst.bindings.length do
+      if inst.bindings(i) != null then
+        while workBindings.length <= i do workBindings.push(null)
+        workBindings(i) = inst.bindings(i)
+      i += 1
+    var j = 0
+    while j < inst.panelBindings.length do
+      if inst.panelBindings(j).notNull then
+        while workPanelBindings.length <= j do workPanelBindings.push(null)
+        workPanelBindings(j) = inst.panelBindings(j)
+      j += 1
 
-  /** Present an already-[[paint]]ed panel's output to the surface. Typically
-    * the last call each frame: `paint(...)` then `show(finalPanel)`.
-    *
-    * On a canvas painter this blits to the canvas. On a container painter it
-    * reads back right away: one frame appended to a [[PixelFrames]], or a
-    * [[PixelImage]]'s `data` overwritten — complete once [[awaitReadback]]
-    * resolves. The blit samples the panel, so a panel of another size is scaled
-    * and one of another format converted; at equal size it is exact.
-    */
-  def show(panel: Panel): Unit =
-    val encoder = device.createCommandEncoder()
-    blitInto(encoder, panel, surface.currentTexture(), preferredFormat)
-    surface.present(encoder)
+  private def hasPanelRuntimeBindings(panel: Opt[Panel]): Boolean =
+    panel.notNull && js.Object
+      .keys(panel.runtimeBindings.asInstanceOf[js.Object])
+      .asInstanceOf[Arr[String]]
+      .length > 0
 
-  /** Write an already-[[paint]]ed panel into `into`, by the same rules as
-    * [[show]] on a container painter: one frame appended to a [[PixelFrames]],
-    * or a [[PixelImage]]'s `data` overwritten. Works on any painter, canvas
-    * ones included — screenshots, a second resolution or format, a bake
-    * download. The panel is scaled to `into`'s size; combine with [[atSize]] to
-    * render at that size instead.
-    *
-    * Reads back right away and resolves with `into` once this readback has
-    * landed, so no [[awaitReadback]] is needed. Other readbacks still in
-    * flight are not awaited. An `rgba32float` panel needs the
-    * `float32-filterable` device feature; an `rgba32float` `into` does not.
-    */
-  def showTo[T <: PixelTarget](panel: Panel, into: T): js.Promise[T] =
-    val image = into.asInstanceOf[PixelImage]
-    validatePixelTarget(into, "Painter.showTo")
-    val rb = ensureReadback()
-    val texture = rb.captureTexture(image.width, image.height, image.format)
-    val encoder = device.createCommandEncoder()
-    blitInto(encoder, panel, texture, image.format.textureFormat)
-    rb.read(encoder, texture, into).map(_ => into)
+  // =========================================================================
+  // Bind group helpers
+  // =========================================================================
 
-  /** Convenience: [[paint]] then [[show]] a single panel. Use the separate
-    * calls when you paint several panels before presenting one.
-    */
-  def paintAndShow(p: Panel): Unit =
-    paint(p)
-    show(p)
+  // Build the group-0 (uniform) bind group, or null when the layer has none.
+  private def buildValueBindGroup(
+      shade: Shade[?, ?],
+      bindings: BindingSlots,
+  ): Opt[GPUBindGroup] =
+    if bindings.length > 0 && shade.valueBindGroupLayout.notNull then
+      val entries = Arr[js.Dynamic]()
+      var i = 0
+      while i < bindings.length do
+        val b = bindings(i)
+        if b != null then entries.push(bindingEntry(i, b))
+        i += 1
+      device.createBindGroup(
+        Obj.literal(layout = shade.valueBindGroupLayout, entries = entries),
+      )
+    else null
+
+  private def setValueBindGroup(
+      pass: GPURenderPassEncoder,
+      shade: Shade[?, ?],
+      bindings: BindingSlots,
+  ): Unit =
+    val bg = buildValueBindGroup(shade, bindings)
+    if bg.notNull then pass.setBindGroup(0, bg)
+
+  // Build the group-1 (panel-texture) bind group, or null when the layer has no
+  // panel layout or no entries.
+  private def buildPanelBindGroup(
+      shade: Shade[?, ?],
+      panelBindings: Arr[Opt[PanelBinding]],
+      srcView: Opt[GPUTextureView] = null,
+  ): Opt[GPUBindGroup] =
+    if shade.panelBindGroupLayout.notNull then
+      val entries = Arr[js.Dynamic]()
+      if srcView.notNull then
+        entries.push(Obj.literal(binding = 0, resource = srcView))
+      val startIdx = if srcView.notNull then 1 else 0
+      var k = startIdx
+      while k < panelBindings.length do
+        val pb = panelBindings(k)
+        if pb.notNull then
+          val view =
+            if pb.depth then pb.panel.depthSamplingView
+            else if pb.mipLevel < 0 then pb.panel.views(pb.index).sampling
+            else pb.panel.views(pb.index).perMip(pb.mipLevel)
+          entries.push(Obj.literal(binding = k, resource = view))
+        k += 1
+      if entries.length > 0 then
+        device.createBindGroup(
+          Obj.literal(
+            layout = shade.panelBindGroupLayout,
+            entries = entries,
+          ),
+        )
+      else null
+    else null
+
+  private def setPanelBindGroup(
+      pass: GPURenderPassEncoder,
+      shade: Shade[?, ?],
+      panelBindings: Arr[Opt[PanelBinding]],
+      srcView: Opt[GPUTextureView] = null,
+  ): Unit =
+    val pg = buildPanelBindGroup(shade, panelBindings, srcView)
+    if pg.notNull then pass.setBindGroup(1, pg)
+
+  // =========================================================================
+  // Bind group creation
+  // =========================================================================
+
+  private def bindingEntry(
+      i: Int,
+      b: BufferBinding[?, ?] | GPUSampler,
+  ): js.Dynamic =
+    if b.isInstanceOf[BufferBinding[?, ?]] then
+      val buffer = b.asInstanceOf[BufferBinding[?, ?]]
+      Obj.literal(
+        binding = i,
+        resource = Obj.literal(buffer = buffer.gpuBuffer),
+      )
+    else Obj.literal(binding = i, resource = b.asInstanceOf[GPUSampler])
+
+  // =========================================================================
+  // Pipeline creation + caching
+  // =========================================================================
+
+  private def blendKeyStr(bs: Opt[BlendState]): String =
+    if bs.isNull then "n"
+    else
+      val c = bs.color
+      val a = bs.alpha
+      s"${c.srcFactor}.${c.dstFactor}.${c.operation}|${a.srcFactor}.${a.dstFactor}.${a.operation}"
+
+  private def getPipeline(
+      shade: Shade[?, ?],
+      blendState: Opt[BlendState],
+      formats: Arr[TextureFormat],
+      depthTest: Boolean,
+      multisample: Boolean,
+      topology: PrimitiveTopology = PrimitiveTopology.TriangleList,
+      cullMode: CullMode = CullMode.None,
+      frontFace: FrontFace = FrontFace.CCW,
+      indexFormat: Opt[String] = null,
+  ): GPURenderPipeline =
+    // Only strip topologies take a stripIndexFormat, and they *must* have one
+    // to be drawn indexed — the primitive restart index depends on it.
+    val stripIndexFormat: Opt[String] =
+      if indexFormat.notNull &&
+        (topology == PrimitiveTopology.TriangleStrip ||
+          topology == PrimitiveTopology.LineStrip)
+      then indexFormat
+      else null
+    // Only ever "", "2" or "4" — no separator needed, and it keeps the key
+    // this builds on every draw call from growing.
+    val stripKey =
+      if stripIndexFormat.isNull then ""
+      else if stripIndexFormat.get == "uint32" then "4"
+      else "2"
+    val key =
+      s"${shade.id}|${blendKeyStr(blendState)}|${formats.asInstanceOf[Arr[String]].join(",")}|$depthTest|$multisample|${topology}|${cullMode}|${frontFace}$stripKey"
+    // One lookup, not a `has` + `at` pair — this runs per draw call.
+    val cached = pipelineCache.at(key)
+    if !js.isUndefined(cached.asInstanceOf[js.Any]) then cached
+    else
+      val targets = Arr[js.Dynamic]()
+      var ti = 0
+      while ti < formats.length do
+        val target =
+          if blendState.isNull then Obj.literal(format = formats(ti).toJs)
+          else Obj.literal(format = formats(ti).toJs, blend = blendState)
+        targets.push(target)
+        ti += 1
+
+      val vertexDescriptor =
+        if shade.vertexBufferLayout.notNull then
+          Obj.literal(
+            module = shade.shaderModule,
+            entryPoint = "vs_main",
+            buffers = Arr(shade.vertexBufferLayout),
+          )
+        else
+          Obj.literal(
+            module = shade.shaderModule,
+            entryPoint = "vs_main",
+          )
+
+      val desc = Obj.literal(
+        layout = shade.pipelineLayout,
+        vertex = vertexDescriptor,
+        fragment = Obj.literal(
+          module = shade.shaderModule,
+          entryPoint = "fs_main",
+          targets = targets,
+        ),
+        primitive = Obj.literal(
+          topology = topology.toJs,
+          cullMode = cullMode.toJs,
+          frontFace = frontFace.toJs,
+        ),
+      )
+      if stripIndexFormat.notNull then
+        desc.primitive.stripIndexFormat = stripIndexFormat.get
+      if depthTest then
+        desc.depthStencil = Obj.literal(
+          format = "depth24plus",
+          depthWriteEnabled = true,
+          depthCompare = "less",
+        )
+      if multisample then desc.multisample = Obj.literal(count = 4)
+      val p = device.createRenderPipeline(desc)
+      pipelineCache.set(key, p)
+      p
 
   // =========================================================================
   // Blit — the one present algorithm (show) and the mip-chain downsample
@@ -1392,9 +1890,6 @@ class Painter private[painter] (
     device.createPipelineLayout(
       Obj.literal(bindGroupLayouts = Arr(blitBindGroupLayout)),
     )
-
-  private val blitPipelines: Dict[GPURenderPipeline] =
-    Dict[GPURenderPipeline]()
 
   /** The blit pipeline for one destination format, created on first use. Shared
     * by `show` (nearest sampler) and mip generation (linear sampler): same
@@ -1546,444 +2041,6 @@ class Painter private[painter] (
       queue.submit(Arr(encoder.finish()))
       i += 1
 
-  // =========================================================================
-  // Working buffers for binding merge (reusable, single-threaded JS)
-  // =========================================================================
-
-  private val _workBindings: BindingSlots = Arr()
-  private val _workPanelBindings: Arr[Opt[PanelBinding]] = Arr()
-
-  private def copyToWork(
-      bindings: BindingSlots,
-      panelBindings: Arr[Opt[PanelBinding]],
-  ): Unit =
-    _workBindings.length = bindings.length
-    var i = 0
-    while i < bindings.length do
-      _workBindings(i) = bindings(i)
-      i += 1
-    _workPanelBindings.length = panelBindings.length
-    var j = 0
-    while j < panelBindings.length do
-      _workPanelBindings(j) = panelBindings(j)
-      j += 1
-
-  private def applyPanelRuntimeBindings(
-      panel: Panel,
-      shade: Shade[?, ?],
-      workBindings: BindingSlots,
-      workPanelBindings: Arr[Opt[PanelBinding]],
-  ): Unit =
-    val dict = panel.runtimeBindings
-    val keys =
-      js.Object.keys(dict.asInstanceOf[js.Object]).asInstanceOf[Arr[String]]
-    var i = 0
-    while i < keys.length do
-      val name = keys(i)
-      val value = dict.at(name)
-      if shade.uniformIndices.has(name) then
-        val idx = shade.uniformIndices.at(name)
-        if idx >= workBindings.length || workBindings(idx) == null then
-          while workBindings.length <= idx do workBindings.push(null)
-          workBindings(idx) =
-            value.asInstanceOf[BufferBinding[?, ?] | GPUSampler]
-      else if shade.panelIndices.has(name) then
-        val idx = shade.panelIndices.at(name)
-        if idx >= workPanelBindings.length || workPanelBindings(idx).isNull then
-          while workPanelBindings.length <= idx do workPanelBindings.push(null)
-          val pb =
-            if value.isInstanceOf[PanelBinding] then
-              value.asInstanceOf[PanelBinding]
-            else PanelBinding(value.asInstanceOf[Panel])
-          workPanelBindings(idx) = pb
-      i += 1
-
-  private def applyInstanceBindings(
-      inst: Instance[?, ?],
-      workBindings: BindingSlots,
-      workPanelBindings: Arr[Opt[PanelBinding]],
-  ): Unit =
-    var i = 0
-    while i < inst.bindings.length do
-      if inst.bindings(i) != null then
-        while workBindings.length <= i do workBindings.push(null)
-        workBindings(i) = inst.bindings(i)
-      i += 1
-    var j = 0
-    while j < inst.panelBindings.length do
-      if inst.panelBindings(j).notNull then
-        while workPanelBindings.length <= j do workPanelBindings.push(null)
-        workPanelBindings(j) = inst.panelBindings(j)
-      j += 1
-
-  private def hasPanelRuntimeBindings(panel: Opt[Panel]): Boolean =
-    panel.notNull && js.Object
-      .keys(panel.runtimeBindings.asInstanceOf[js.Object])
-      .asInstanceOf[Arr[String]]
-      .length > 0
-
-  // =========================================================================
-  // Bind group helpers
-  // =========================================================================
-
-  // Build the group-0 (uniform) bind group, or null when the layer has none.
-  private def buildValueBindGroup(
-      shade: Shade[?, ?],
-      bindings: BindingSlots,
-  ): Opt[GPUBindGroup] =
-    if bindings.length > 0 && shade.valueBindGroupLayout.notNull then
-      val entries = Arr[js.Dynamic]()
-      var i = 0
-      while i < bindings.length do
-        val b = bindings(i)
-        if b != null then entries.push(bindingEntry(i, b))
-        i += 1
-      device.createBindGroup(
-        Obj.literal(layout = shade.valueBindGroupLayout, entries = entries),
-      )
-    else null
-
-  private def setValueBindGroup(
-      pass: GPURenderPassEncoder,
-      shade: Shade[?, ?],
-      bindings: BindingSlots,
-  ): Unit =
-    val bg = buildValueBindGroup(shade, bindings)
-    if bg.notNull then pass.setBindGroup(0, bg)
-
-  // Build the group-1 (panel-texture) bind group, or null when the layer has no
-  // panel layout or no entries.
-  private def buildPanelBindGroup(
-      shade: Shade[?, ?],
-      panelBindings: Arr[Opt[PanelBinding]],
-      srcView: Opt[GPUTextureView] = null,
-  ): Opt[GPUBindGroup] =
-    if shade.panelBindGroupLayout.notNull then
-      val entries = Arr[js.Dynamic]()
-      if srcView.notNull then
-        entries.push(Obj.literal(binding = 0, resource = srcView))
-      val startIdx = if srcView.notNull then 1 else 0
-      var k = startIdx
-      while k < panelBindings.length do
-        val pb = panelBindings(k)
-        if pb.notNull then
-          val view =
-            if pb.depth then pb.panel.depthSamplingView
-            else if pb.mipLevel < 0 then pb.panel.views(pb.index).sampling
-            else pb.panel.views(pb.index).perMip(pb.mipLevel)
-          entries.push(Obj.literal(binding = k, resource = view))
-        k += 1
-      if entries.length > 0 then
-        device.createBindGroup(
-          Obj.literal(
-            layout = shade.panelBindGroupLayout,
-            entries = entries,
-          ),
-        )
-      else null
-    else null
-
-  private def setPanelBindGroup(
-      pass: GPURenderPassEncoder,
-      shade: Shade[?, ?],
-      panelBindings: Arr[Opt[PanelBinding]],
-      srcView: Opt[GPUTextureView] = null,
-  ): Unit =
-    val pg = buildPanelBindGroup(shade, panelBindings, srcView)
-    if pg.notNull then pass.setBindGroup(1, pg)
-
-  // =========================================================================
-  // Per-shape render pass helper (shared by draw() and paint())
-  // =========================================================================
-
-  private def renderShapeOnPass(
-      pass: GPURenderPassEncoder,
-      shape: AnyShape,
-      depthTest: Boolean = false,
-      multisample: Boolean = false,
-      formats: Arr[TextureFormat] = null,
-      panel: Opt[Panel] = null,
-  ): Unit =
-    val fmts = if formats != null then formats else Arr(preferredFormat)
-    val pipeline = getPipeline(
-      shape.shade,
-      shape.blendState,
-      fmts,
-      depthTest,
-      multisample,
-      shape.form.topology,
-      shape.cullMode,
-      shape.form.frontFace,
-      shape.form.indexFormat,
-    )
-
-    pass.setPipeline(pipeline)
-
-    val form = shape.form
-    val bufferCount = form.activeBuffers
-    val instanceCount = shape.instances.length
-    val hasPanelBinds = hasPanelRuntimeBindings(panel)
-
-    // A form can hold several geometry buffers (e.g. the fragments of a split
-    // polyline); they are drawn in sequence sharing pipeline and bind groups.
-    inline def drawCall(): Unit =
-      var b = 0
-      while b < bufferCount do
-        val buf = form.buffers(b)
-        if buf.vertexCount > 0 then
-          pass.setVertexBuffer(
-            0,
-            buf.vertexBuffer.get,
-            0.0,
-            buf.vertexBufferCurrentSize,
-          )
-          if buf.indexCount > 0 then
-            pass.setIndexBuffer(
-              buf.indexBuffer.get,
-              buf.indexFormat,
-              0.0,
-              buf.indexBufferCurrentSize,
-            )
-            pass.drawIndexed(buf.indexCount)
-          else pass.draw(buf.vertexCount)
-        b += 1
-
-    if instanceCount == 0 then
-      if hasPanelBinds then
-        copyToWork(shape.bindings, shape.panelBindings)
-        applyPanelRuntimeBindings(
-          panel,
-          shape.shade,
-          _workBindings,
-          _workPanelBindings,
-        )
-        setValueBindGroup(pass, shape.shade, _workBindings)
-        setPanelBindGroup(pass, shape.shade, _workPanelBindings)
-      else
-        setValueBindGroup(pass, shape.shade, shape.bindings)
-        setPanelBindGroup(pass, shape.shade, shape.panelBindings)
-      drawCall()
-    else
-      var i = 0
-      while i < instanceCount do
-        val inst = shape.instances.items(i)
-        copyToWork(shape.bindings, shape.panelBindings)
-        if hasPanelBinds then
-          applyPanelRuntimeBindings(
-            panel,
-            shape.shade,
-            _workBindings,
-            _workPanelBindings,
-          )
-        applyInstanceBindings(inst, _workBindings, _workPanelBindings)
-        setValueBindGroup(pass, shape.shade, _workBindings)
-        setPanelBindGroup(pass, shape.shade, _workPanelBindings)
-        drawCall()
-        i += 1
-
-  // =========================================================================
-  // Per-layer render pass helper
-  // =========================================================================
-
-  private def renderLayerOnPass(
-      pass: GPURenderPassEncoder,
-      layer: AnyLayer,
-      depthTest: Boolean = false,
-      multisample: Boolean = false,
-      formats: Arr[TextureFormat] = null,
-      srcView: Opt[GPUTextureView] = null,
-      panel: Opt[Panel] = null,
-  ): Unit =
-    val fmts = if formats != null then formats else Arr(preferredFormat)
-    val pipeline = getPipeline(
-      layer.shade,
-      layer.blendState,
-      fmts,
-      depthTest,
-      multisample,
-    )
-
-    pass.setPipeline(pipeline)
-
-    val instanceCount = layer.instances.length
-    val hasPanelBinds = hasPanelRuntimeBindings(panel)
-
-    if instanceCount == 0 then
-      if hasPanelBinds then
-        // Dynamic path: panel runtime overrides merged per draw — not cached.
-        copyToWork(layer.bindings, layer.panelBindings)
-        applyPanelRuntimeBindings(
-          panel,
-          layer.shade,
-          _workBindings,
-          _workPanelBindings,
-        )
-        setValueBindGroup(pass, layer.shade, _workBindings)
-        val effectiveSrcView =
-          if _workPanelBindings.length > 0 && _workPanelBindings(0).notNull
-          then null
-          else srcView
-        setPanelBindGroup(
-          pass,
-          layer.shade,
-          _workPanelBindings,
-          effectiveSrcView,
-        )
-      else
-        // Static path: cacheable by (panelId, epoch). A hit skips the
-        // work-buffer copy + GPU bind-group build; a mismatch (or first draw)
-        // rebuilds and re-stores, dropping any stale entry.
-        val c = layer.cache
-        if c.notNull && panel.notNull
-          && c.panelId == panel.panelId && c.epoch == panel.bindEpoch
-        then
-          if c.valueGroup.notNull then pass.setBindGroup(0, c.valueGroup)
-          if c.panelGroup.notNull then pass.setBindGroup(1, c.panelGroup)
-        else
-          val vg = buildValueBindGroup(layer.shade, layer.bindings)
-          val pg =
-            buildPanelBindGroup(layer.shade, layer.panelBindings, srcView)
-          if vg.notNull then pass.setBindGroup(0, vg)
-          if pg.notNull then pass.setBindGroup(1, pg)
-          layer.cache =
-            if panel.notNull then
-              LayerBindCache(panel.panelId, panel.bindEpoch, vg, pg)
-            else null
-      pass.draw(3)
-    else
-      var i = 0
-      while i < instanceCount do
-        val inst = layer.instances.items(i)
-        copyToWork(layer.bindings, layer.panelBindings)
-        if hasPanelBinds then
-          applyPanelRuntimeBindings(
-            panel,
-            layer.shade,
-            _workBindings,
-            _workPanelBindings,
-          )
-        applyInstanceBindings(inst, _workBindings, _workPanelBindings)
-        setValueBindGroup(pass, layer.shade, _workBindings)
-        val effectiveSrcView =
-          if _workPanelBindings.length > 0 && _workPanelBindings(0).notNull
-          then null
-          else srcView
-        setPanelBindGroup(
-          pass,
-          layer.shade,
-          _workPanelBindings,
-          effectiveSrcView,
-        )
-        pass.draw(3)
-        i += 1
-
-  // =========================================================================
-  // Pipeline creation + caching
-  // =========================================================================
-
-  private def blendKeyStr(bs: Opt[BlendState]): String =
-    if bs.isNull then "n"
-    else
-      val c = bs.color
-      val a = bs.alpha
-      s"${c.srcFactor}.${c.dstFactor}.${c.operation}|${a.srcFactor}.${a.dstFactor}.${a.operation}"
-
-  private def getPipeline(
-      shade: Shade[?, ?],
-      blendState: Opt[BlendState],
-      formats: Arr[TextureFormat],
-      depthTest: Boolean,
-      multisample: Boolean,
-      topology: PrimitiveTopology = PrimitiveTopology.TriangleList,
-      cullMode: CullMode = CullMode.None,
-      frontFace: FrontFace = FrontFace.CCW,
-      indexFormat: Opt[String] = null,
-  ): GPURenderPipeline =
-    // Only strip topologies take a stripIndexFormat, and they *must* have one
-    // to be drawn indexed — the primitive restart index depends on it.
-    val stripIndexFormat: Opt[String] =
-      if indexFormat.notNull &&
-        (topology == PrimitiveTopology.TriangleStrip ||
-          topology == PrimitiveTopology.LineStrip)
-      then indexFormat
-      else null
-    // Only ever "", "2" or "4" — no separator needed, and it keeps the key
-    // this builds on every draw call from growing.
-    val stripKey =
-      if stripIndexFormat.isNull then ""
-      else if stripIndexFormat.get == "uint32" then "4"
-      else "2"
-    val key =
-      s"${shade.id}|${blendKeyStr(blendState)}|${formats.asInstanceOf[Arr[String]].join(",")}|$depthTest|$multisample|${topology}|${cullMode}|${frontFace}$stripKey"
-    // One lookup, not a `has` + `at` pair — this runs per draw call.
-    val cached = pipelineCache.at(key)
-    if !js.isUndefined(cached.asInstanceOf[js.Any]) then cached
-    else
-      val targets = Arr[js.Dynamic]()
-      var ti = 0
-      while ti < formats.length do
-        val target =
-          if blendState.isNull then Obj.literal(format = formats(ti).toJs)
-          else Obj.literal(format = formats(ti).toJs, blend = blendState)
-        targets.push(target)
-        ti += 1
-
-      val vertexDescriptor =
-        if shade.vertexBufferLayout.notNull then
-          Obj.literal(
-            module = shade.shaderModule,
-            entryPoint = "vs_main",
-            buffers = Arr(shade.vertexBufferLayout),
-          )
-        else
-          Obj.literal(
-            module = shade.shaderModule,
-            entryPoint = "vs_main",
-          )
-
-      val desc = Obj.literal(
-        layout = shade.pipelineLayout,
-        vertex = vertexDescriptor,
-        fragment = Obj.literal(
-          module = shade.shaderModule,
-          entryPoint = "fs_main",
-          targets = targets,
-        ),
-        primitive = Obj.literal(
-          topology = topology.toJs,
-          cullMode = cullMode.toJs,
-          frontFace = frontFace.toJs,
-        ),
-      )
-      if stripIndexFormat.notNull then
-        desc.primitive.stripIndexFormat = stripIndexFormat.get
-      if depthTest then
-        desc.depthStencil = Obj.literal(
-          format = "depth24plus",
-          depthWriteEnabled = true,
-          depthCompare = "less",
-        )
-      if multisample then desc.multisample = Obj.literal(count = 4)
-      val p = device.createRenderPipeline(desc)
-      pipelineCache.set(key, p)
-      p
-
-  // =========================================================================
-  // Bind group creation
-  // =========================================================================
-
-  private def bindingEntry(
-      i: Int,
-      b: BufferBinding[?, ?] | GPUSampler,
-  ): js.Dynamic =
-    if b.isInstanceOf[BufferBinding[?, ?]] then
-      val buffer = b.asInstanceOf[BufferBinding[?, ?]]
-      Obj.literal(
-        binding = i,
-        resource = Obj.literal(buffer = buffer.gpuBuffer),
-      )
-    else Obj.literal(binding = i, resource = b.asInstanceOf[GPUSampler])
-
 object Painter:
   /** Initialise WebGPU for `canvas` and resolve a ready [[Painter]]. Requests
     * an adapter + device, configures the context with the preferred format,
@@ -2000,26 +2057,50 @@ object Painter:
       )
     else
       val gpu = maybeGpu.safe
+      // Builds its `CanvasSurface` itself rather than going through the
+      // union-typed `init`, so a browser bundle that only uses this overload
+      // never links `CaptureSurface`.
       val surface = CanvasSurface(
         canvas,
         format = TextureFormat.of(gpu.getPreferredCanvasFormat()),
       )
-      setup(surface, gpu)
+      WebGPU
+        .requestAdapter(gpu)
+        .flatMap: adapter =>
+          WebGPU
+            .requestDevice(adapter)
+            .map: device =>
+              createPainter(device, surface, adapter, gpu)
 
-  /** Create a painter on `target` with a caller-supplied `gpu` — offline
+  /** Initialise WebGPU and run `setup` with the ready [[Painter]] — the
+    * standard sketch entry point. All resource creation, `onResize`, and the
+    * `animate` loop go inside the `setup` closure:
+    * {{{
+    * Painter.init(canvas): p =>
+    *   // create shades, forms, shapes, panels, bindings here
+    *   animate: tpf => p.paint(panel); p.show(panel)
+    * }}}
+    */
+  def init(canvas: HTMLCanvasElement)(
+      setup: Painter => Unit,
+  ): js.Promise[Unit] =
+    init(canvas).map(setup)
+
+  /** Initialise a painter on `target` with a caller-supplied `gpu` — offscreen
     * (node-webgpu's `create([...])`) or in the browser with adapter options.
-    * The library never looks the GPU up.
+    * Unlike `init(canvas)`, never looks the GPU up. The painter keeps `gpu` and
+    * the adapter alive.
     *
-    *   - `target` — a [[PixelFrames]] / [[PixelImage]] container (offline:
-    *     `show` reads back into it), or a [[Surface]] such as
-    *     `CanvasSurface(canvas)`. Panels default to its format.
+    *   - `target` — a [[PixelFrames]] / [[PixelImage]] (an offscreen painter:
+    *     `show` reads back into it), a canvas, or a [[Surface]] such as
+    *     `CanvasSurface(canvas, format = …)`. Panels default to its format.
     *   - `powerPreference`, `forceFallbackAdapter`, `requireAdapter`,
     *     `logAdapter` — see [[WebGPU.requestAdapter]].
     *   - `requiredFeatures`, `requiredLimits` — see [[WebGPU.requestDevice]].
-    *     An `rgba32float` container needs `Arr("float32-filterable")`.
+    *     An `rgba32float` pixel target needs `Arr("float32-filterable")`.
     */
-  def create(
-      target: PixelTarget | Surface,
+  def init(
+      target: PixelTarget | HTMLCanvasElement | Surface,
       gpu: GPU,
       powerPreference: Maybe[PowerPreference] = Maybe.Not,
       forceFallbackAdapter: Boolean = false,
@@ -2040,81 +2121,49 @@ object Painter:
         WebGPU
           .requestDevice(adapter, requiredFeatures, requiredLimits)
           .map: device =>
-            createOn(target, device, adapter, gpu)
+            createPainter(device, surfaceFor(target, gpu), adapter, gpu)
 
-  /** Create a painter on `target` with a caller-supplied `device`; synchronous,
-    * no lookups at all. For adapter-level control in user code
-    * (`WebGPU.requestAdapter` → `WebGPU.requestDevice` → here).
+  /** Initialise a painter on `target` with a caller-supplied `device`;
+    * synchronous, no adapter or device lookup. For adapter-level control in
+    * user code (`WebGPU.requestAdapter` → `WebGPU.requestDevice` → here).
+    * `target` as in the `gpu` overload; a raw canvas reads `navigator.gpu` for
+    * its preferred format (`bgra8unorm` without one) — pass
+    * `CanvasSurface(canvas, format = …)` to avoid that. The caller keeps the
+    * `GPU` alive while the painter renders.
     */
-  def create(target: PixelTarget | Surface, device: GPUDevice): Painter =
-    createOn(target, device, null, null)
-
-  private def createOn(
-      target: PixelTarget | Surface,
+  def init(
+      target: PixelTarget | HTMLCanvasElement | Surface,
       device: GPUDevice,
-      adapter: Opt[GPUAdapter],
-      gpu: Opt[GPU],
   ): Painter =
-    if target.isInstanceOf[Surface] then
-      build(target.asInstanceOf[Surface], device, adapter, gpu)
+    createPainter(device, surfaceFor(target, null), null, null)
+
+  // A pixel target is recognized by its shape, not by `instanceof
+  // HTMLCanvasElement`: that global is missing outside browsers, and a
+  // NativeScript canvas is not one either.
+  private def surfaceFor(
+      target: PixelTarget | HTMLCanvasElement | Surface,
+      gpu: Opt[GPU],
+  ): Surface =
+    if target.isInstanceOf[Surface] then target.asInstanceOf[Surface]
+    else if PixelTarget.isPixelTarget(target) then
+      CaptureSurface(target.asInstanceOf[PixelTarget])
     else
-      val readback = Readback(device)
-      val painter = build(
-        CaptureSurface(target.asInstanceOf[PixelTarget], readback),
-        device,
-        adapter,
-        gpu,
-      )
-      painter.readback = readback
-      painter
-
-  // `init` goes through here, not through the union-typed `create`, so a
-  // browser bundle never links `CaptureSurface`.
-  private def setup(surface: Surface, gpu: GPU): js.Promise[Painter] =
-    WebGPU
-      .requestAdapter(gpu)
-      .flatMap: adapter =>
-        WebGPU
-          .requestDevice(adapter)
-          .map: device =>
-            build(surface, device, adapter, gpu)
-
-  private def build(
-      surface: Surface,
-      device: GPUDevice,
-      adapter: Opt[GPUAdapter],
-      gpu: Opt[GPU],
-  ): Painter =
-    retainWithDevice(device, adapter, gpu)
-    surface.configure(device)
-    new Painter(device, surface, adapter)
-
-  // The device does not keep its `GPU` (Dawn instance) alive: once that is
-  // collected mid-render, node-webgpu crashes the process. Held with the
-  // adapter as a JS property, because the linker drops Scala fields that are
-  // never read.
-  private def retainWithDevice(
-      device: GPUDevice,
-      adapter: Opt[GPUAdapter],
-      gpu: Opt[GPU],
-  ): Unit =
-    if adapter.notNull || gpu.notNull then
-      device
-        .asInstanceOf[js.Dynamic]
-        .updateDynamic("trivalibsRetained")(
-          Arr[js.Any](adapter.asInstanceOf[js.Any], gpu.asInstanceOf[js.Any]),
+      val canvas = target.asInstanceOf[HTMLCanvasElement]
+      if gpu.isNull then CanvasSurface(canvas)
+      else
+        CanvasSurface(
+          canvas,
+          format = TextureFormat.of(gpu.get.getPreferredCanvasFormat()),
         )
 
-  /** Initialise WebGPU and run `setup` with the ready [[Painter]] — the
-    * standard sketch entry point. All resource creation, `onResize`, and the
-    * `animate` loop go inside the `setup` closure:
-    * {{{
-    * Painter.init(canvas): p =>
-    *   // create shades, forms, shapes, panels, bindings here
-    *   animate: tpf => p.paint(panel); p.show(panel)
-    * }}}
-    */
-  def init(canvas: HTMLCanvasElement)(
-      setup: Painter => Unit,
-  ): js.Promise[Unit] =
-    init(canvas).map(setup)
+  // `initializeSurface()` hands `this` to the surface, so it runs only after
+  // construction.
+  private def createPainter(
+      device: GPUDevice,
+      surface: Surface,
+      adapter: Opt[GPUAdapter],
+      gpu: Opt[GPU],
+  ): Painter =
+    val painter = new Painter(device, surface, adapter, gpu)
+    painter.initializeSurface()
+    painter

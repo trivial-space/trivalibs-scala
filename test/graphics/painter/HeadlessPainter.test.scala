@@ -1,6 +1,8 @@
 package trivalibs.graphics.painter
 
 import munit.FunSuite
+import org.scalajs.dom.HTMLCanvasElement
+import trivalibs.utils.js.jsError
 import trivalibs.prelude.core.{*, given}
 import trivalibs.prelude.painter.{*, given}
 
@@ -10,13 +12,13 @@ import scala.scalajs.js
 import scala.scalajs.js.Thenable.Implicits.*
 import scala.scalajs.js.typedarray.*
 
-/** GPU integration tests: render offline through node-webgpu and assert on the
-  * read-back pixels. `webgpu` is a dev dependency, loaded with a dynamic
+/** GPU integration tests: render offscreen through node-webgpu and assert on
+  * the read-back pixels. `webgpu` is a dev dependency, loaded with a dynamic
   * import; without it, or without an adapter, the tests are skipped.
   *
   * `TRIVALIBS_WEBGPU_ADAPTER` / `TRIVALIBS_WEBGPU_BACKEND` pass Dawn's
-  * `adapter=` / `backend=` options to `create`, e.g. to pin lavapipe /
-  * llvmpipe in CI (list the exact names with `node
+  * `adapter=` / `backend=` options to `create`, e.g. to pin lavapipe / llvmpipe
+  * in CI (list the exact names with `node
   * examples/headless_triangle/render.node.ts --list-adapters`).
   */
 class HeadlessPainterTest extends FunSuite:
@@ -37,9 +39,11 @@ class HeadlessPainterTest extends FunSuite:
       url <- js.`import`[js.Dynamic]("node:url").toFuture
       cwd = js.Dynamic.global.process.cwd().asInstanceOf[String]
       path = module.createRequire(cwd + "/").resolve("webgpu")
-      webgpu <- js.`import`[js.Dynamic](
-        url.pathToFileURL(path).href.asInstanceOf[String],
-      ).toFuture
+      webgpu <- js
+        .`import`[js.Dynamic](
+          url.pathToFileURL(path).href.asInstanceOf[String],
+        )
+        .toFuture
     yield webgpu.create(options).asInstanceOf[GPU]: Opt[GPU]
     loaded.recover(_ => null)
 
@@ -54,7 +58,7 @@ class HeadlessPainterTest extends FunSuite:
   ): Future[Painter] =
     gpuOrSkip.flatMap: g =>
       Painter
-        .create(target, g, requiredFeatures = features)
+        .init(target, g, requiredFeatures = features)
         .toFuture
         .recover:
           case e =>
@@ -73,15 +77,17 @@ class HeadlessPainterTest extends FunSuite:
     val image = PixelImage(5, 3)
     painterOn(image).flatMap: p =>
       p.paintAndShow(p.panel(clearColor = (0.2, 0.4, 0.6, 1.0)))
-      p.awaitReadback().toFuture.map: _ =>
-        val data = image.data.asInstanceOf[Uint8Array]
-        var i = 0
-        while i < 5 * 3 do
-          assertEquals(
-            (data(i * 4), data(i * 4 + 1), data(i * 4 + 2), data(i * 4 + 3)),
-            (51.toShort, 102.toShort, 153.toShort, 255.toShort),
-          )
-          i += 1
+      p.awaitReadback()
+        .toFuture
+        .map: _ =>
+          val data = image.data.asInstanceOf[Uint8Array]
+          var i = 0
+          while i < 5 * 3 do
+            assertEquals(
+              (data(i * 4), data(i * 4 + 1), data(i * 4 + 2), data(i * 4 + 3)),
+              (51.toShort, 102.toShort, 153.toShort, 255.toShort),
+            )
+            i += 1
 
   test("rows are top row first, sampled at pixel centers"):
     val image = PixelImage(4, 2)
@@ -90,25 +96,33 @@ class HeadlessPainterTest extends FunSuite:
         program.frag: ctx =>
           ctx.out.color := vec4(ctx.in.uv.x, ctx.in.uv.y, 0.0, 1.0)
       p.paintAndShow(p.panel(layer = p.layer(shade)))
-      p.awaitReadback().toFuture.map: _ =>
-        def expected(v: Double) = (v * 255.0).round.toDouble
-        var x = 0
-        while x < 4 do
-          assertEqualsDouble(channel(image, x, 0, 0), expected((x + 0.5) / 4), 1.0)
-          x += 1
-        assertEqualsDouble(channel(image, 0, 0, 1), expected(0.25), 1.0)
-        assertEqualsDouble(channel(image, 0, 1, 1), expected(0.75), 1.0)
+      p.awaitReadback()
+        .toFuture
+        .map: _ =>
+          def expected(v: Double) = (v * 255.0).round.toDouble
+          var x = 0
+          while x < 4 do
+            assertEqualsDouble(
+              channel(image, x, 0, 0),
+              expected((x + 0.5) / 4),
+              1.0,
+            )
+            x += 1
+          assertEqualsDouble(channel(image, 0, 0, 1), expected(0.25), 1.0)
+          assertEqualsDouble(channel(image, 0, 1, 1), expected(0.75), 1.0)
 
   test("rgba16float keeps HDR values above 1"):
     val image = PixelImage(4, 4, PixelFormat.Rgba16Float)
     painterOn(image).flatMap: p =>
       p.paintAndShow(p.panel(clearColor = (4.0, 0.5, -2.0, 1.0)))
-      p.awaitReadback().toFuture.map: _ =>
-        assertEquals(channel(image, 3, 3, 0), 4.0)
-        assertEquals(channel(image, 3, 3, 1), 0.5)
-        assertEquals(channel(image, 3, 3, 2), -2.0)
+      p.awaitReadback()
+        .toFuture
+        .map: _ =>
+          assertEquals(channel(image, 3, 3, 0), 4.0)
+          assertEquals(channel(image, 3, 3, 1), 0.5)
+          assertEquals(channel(image, 3, 3, 2), -2.0)
 
-  test("rgba32float container fails fast without float32-filterable"):
+  test("rgba32float pixel target fails fast without float32-filterable"):
     gpuOrSkip.flatMap: g =>
       WebGPU
         .requestAdapter(g)
@@ -117,8 +131,24 @@ class HeadlessPainterTest extends FunSuite:
         .map: device =>
           val image = PixelImage(2, 2, PixelFormat.Rgba32Float)
           val error = intercept[js.JavaScriptException]:
-            Painter.create(image, device)
+            Painter.init(image, device)
           assert(error.getMessage.contains("float32-filterable"))
+
+  test("init routes a raw canvas to a CanvasSurface"):
+    gpuOrSkip.flatMap: g =>
+      WebGPU
+        .requestAdapter(g)
+        .flatMap(a => WebGPU.requestDevice(a))
+        .toFuture
+        .map: device =>
+          val getContext: js.Function1[String, Any] =
+            kind => throw jsError(s"getContext($kind)")
+          val canvasLike = Obj
+            .literal(width = 4, height = 4, getContext = getContext)
+            .asInstanceOf[HTMLCanvasElement]
+          val error = intercept[js.JavaScriptException]:
+            Painter.init(canvasLike, device)
+          assert(error.getMessage.contains("getContext(webgpu)"))
 
   test("PixelFrames gets one frame per show, in show order"):
     val frames = PixelFrames(2, 2)
@@ -128,10 +158,12 @@ class HeadlessPainterTest extends FunSuite:
       for v <- Seq(0.2, 0.4, 0.6) do
         value.set(v)
         p.paintAndShow(panel)
-      p.awaitReadback().toFuture.map: _ =>
-        assertEquals(frames.frames.length, 3)
-        val reds = frames.frames.map(f => f.asInstanceOf[Uint8Array](0).toInt)
-        assertEquals(reds.toSeq, Seq(51, 102, 153))
+      p.awaitReadback()
+        .toFuture
+        .map: _ =>
+          assertEquals(frames.frames.length, 3)
+          val reds = frames.frames.map(f => f.asInstanceOf[Uint8Array](0).toInt)
+          assertEquals(reds.toSeq, Seq(51, 102, 153))
 
   test("PixelImage keeps the last of several in-flight shows"):
     val image = PixelImage(2, 2)
@@ -141,8 +173,10 @@ class HeadlessPainterTest extends FunSuite:
       for v <- Seq(0.2, 0.4, 0.6, 0.8, 1.0) do
         value.set(v)
         p.paintAndShow(panel)
-      p.awaitReadback().toFuture.map: _ =>
-        assertEquals(channel(image, 1, 1, 0), 255.0)
+      p.awaitReadback()
+        .toFuture
+        .map: _ =>
+          assertEquals(channel(image, 1, 1, 0), 255.0)
 
   test("showTo resolves with its target, scaled to its size"):
     val image = PixelImage(8, 8)
@@ -160,17 +194,71 @@ class HeadlessPainterTest extends FunSuite:
         assertEquals(channel(small, 2, 1, 1), 102.0)
         assertEquals(sequence.frames.length, 1)
 
+  test("showTo caches, works uncached, and survives freeCaptureCache"):
+    val image = PixelImage(8, 8)
+    painterOn(image).flatMap: p =>
+      val red = p.panel(clearColor = (1.0, 0.0, 0.0, 1.0))
+      val green = p.panel(clearColor = (0.0, 1.0, 0.0, 1.0))
+      p.paint(red, green)
+      val first = PixelImage(4, 4)
+      val second = PixelImage(4, 4)
+      val oneOff = PixelImage(5, 3)
+      val all = js.Promise.all(
+        Arr[js.Promise[Any]](
+          p.showTo(red, first),
+          p.showTo(green, second),
+          p.showTo(red, oneOff, cache = false),
+        ),
+      )
+      // Freed while those reads are in flight: they still land.
+      p.freeCaptureCache()
+      val afterFree = PixelImage(4, 4)
+      val again = p.showTo(green, afterFree)
+      js.Promise
+        .all(Arr[js.Promise[Any]](all, again))
+        .toFuture
+        .map: _ =>
+          assertEquals(channel(first, 3, 3, 0), 255.0)
+          assertEquals(channel(second, 3, 3, 1), 255.0)
+          assertEquals(channel(second, 3, 3, 0), 0.0)
+          assertEquals(channel(oneOff, 4, 2, 0), 255.0)
+          assertEquals(channel(afterFree, 3, 3, 1), 255.0)
+
   test("showTo validates its target"):
     val image = PixelImage(4, 4)
     painterOn(image).map: p =>
       val panel = p.panel(clearColor = (0.0, 0.0, 0.0, 1.0))
       p.paint(panel)
       val bad = Obj
-        .literal(width = 4, height = 4, format = "rgba8unorm", data = new Uint8Array(3))
+        .literal(
+          width = 4,
+          height = 4,
+          format = "rgba8unorm",
+          data = new Uint8Array(3),
+        )
         .asInstanceOf[PixelImage]
       val error = intercept[js.JavaScriptException]:
         p.showTo(panel, bad)
       assert(error.getMessage.contains("Painter.showTo"))
+
+  test("PixelTarget.validate is public, and passes a well-formed target"):
+    val target: PixelTarget = PixelImage(4, 4)
+    PixelTarget.validate(target)
+    val bad = Obj
+      .literal(
+        width = 0,
+        height = 4,
+        format = "rgba8unorm",
+        data = new Uint8Array(0),
+      )
+      .asInstanceOf[PixelImage]
+    val error = intercept[js.JavaScriptException]:
+      PixelTarget.validate(bad)
+    assert(
+      error.getMessage.contains(
+        "PixelTarget.validate: invalid pixel target size",
+      ),
+    )
 
   test("atSize overrides the target size and restores it"):
     val image = PixelImage(8, 8)
@@ -192,5 +280,13 @@ class HeadlessPainterTest extends FunSuite:
       assertEquals(sizes.toSeq, Seq("8x8", "2x3", "8x8"))
       saved.toFuture.map: _ =>
         // Painted at 2×3, so each of the two columns is one exact texel.
-        assertEqualsDouble(channel(shot, 0, 0, 0), (0.25 * 255).round.toDouble, 1.0)
-        assertEqualsDouble(channel(shot, 1, 2, 0), (0.75 * 255).round.toDouble, 1.0)
+        assertEqualsDouble(
+          channel(shot, 0, 0, 0),
+          (0.25 * 255).round.toDouble,
+          1.0,
+        )
+        assertEqualsDouble(
+          channel(shot, 1, 2, 0),
+          (0.75 * 255).round.toDouble,
+          1.0,
+        )

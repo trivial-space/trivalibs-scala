@@ -6,7 +6,7 @@ import trivalibs.utils.js.*
 import scala.scalajs.js
 
 /** What [[Painter.show]] presents to: a browser canvas ([[CanvasSurface]]), or
-  * — internally — a capture into a [[PixelFrames]] / [[PixelImage]] container.
+  * — internally, on an offscreen painter — a [[PixelFrames]] / [[PixelImage]].
   * A painter owns exactly one surface, chosen by its entry point.
   */
 trait Surface:
@@ -21,8 +21,8 @@ trait Surface:
     */
   def format: TextureFormat
 
-  /** Called once with the device, before the first frame. */
-  def configure(device: GPUDevice): Unit
+  /** Called once with the fully constructed painter, before the first frame. */
+  def configure(painter: Painter): Unit
 
   /** Texture `show` / `draw` render into this frame. */
   def currentTexture(): GPUTexture
@@ -54,7 +54,8 @@ final class CanvasSurface private (
   def width: Int = canvas.width
   def height: Int = canvas.height
 
-  def configure(device: GPUDevice): Unit =
+  def configure(painter: Painter): Unit =
+    val device = painter.device
     queue = device.queue
     val canvasContext = WebGPU.getContext(canvas)
     canvasContext.configure(Obj.literal(device = device, format = format.toJs))
@@ -108,3 +109,46 @@ object CanvasSurface:
     val gpu = WebGPU.getGPU()
     if gpu.isEmpty then TextureFormat.Bgra8Unorm
     else TextureFormat.of(gpu.safe.getPreferredCanvasFormat())
+
+/** The surface of an offscreen painter, created on a [[PixelTarget]]. Not
+  * user-facing: [[Painter.init]] wraps the target in it. `show` renders into
+  * one capture texture of the target's size and format, and `present` reads it
+  * back into the target.
+  */
+private[painter] final class CaptureSurface(val target: PixelTarget)
+    extends Surface:
+  val width: Int = target.asInstanceOf[PixelImage].width
+  val height: Int = target.asInstanceOf[PixelImage].height
+  val pixelFormat: PixelFormat = target.asInstanceOf[PixelImage].format
+  val format: TextureFormat = pixelFormat.textureFormat
+  private var readback: Opt[Readback] = null
+  private var texture: Opt[GPUTexture] = null
+
+  PixelTarget.validate(target, "Painter.init")
+
+  def configure(painter: Painter): Unit =
+    val device = painter.device
+    if pixelFormat == PixelFormat.Rgba32Float &&
+      !device.features.has("float32-filterable")
+    then
+      throw jsError(
+        "Painter.init: an rgba32float pixel target needs the device feature " +
+          "'float32-filterable'. Pass requiredFeatures = " +
+          "Arr(\"float32-filterable\") to Painter.init, or use rgba16float.",
+      )
+    readback = painter.ensureReadback()
+    texture = device.createTexture(
+      Obj.literal(
+        size = Obj.literal(width = width, height = height),
+        format = pixelFormat.toJs,
+        usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      ),
+    )
+
+  def currentTexture(): GPUTexture = texture.get
+
+  def present(encoder: GPUCommandEncoder): Unit =
+    readback.get.read(encoder, texture.get, target, pooled = true)
+    ()
+
+  def onResize(cb: (Int, Int) => Unit): Unit = ()

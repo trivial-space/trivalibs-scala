@@ -1,6 +1,5 @@
 package trivalibs.graphics.painter
 
-import org.scalajs.dom
 import org.scalajs.dom.HTMLCanvasElement
 import trivalibs.utils.js.*
 
@@ -255,7 +254,7 @@ object GPUMapMode:
   val READ = 0x1
   val WRITE = 0x2
 
-/** Adapter power hint for [[WebGPU.requestAdapter]] / [[Painter.create]]. */
+/** Adapter power hint for [[WebGPU.requestAdapter]] / [[Painter.init]]. */
 opaque type PowerPreference = String
 object PowerPreference:
   val HighPerformance: PowerPreference = "high-performance"
@@ -267,14 +266,14 @@ object PowerPreference:
 // =============================================================================
 
 object WebGPU:
-  /** Get the GPU object from navigator, if WebGPU is supported. Browser only;
-    * used by `Painter.init(canvas)`. Offline hosts pass their `GPU` in.
+  /** `navigator.gpu`: undefined without WebGPU or without a `navigator` (most
+    * non-browser hosts, which pass their `GPU` in). Used by
+    * `Painter.init(canvas)`.
     */
   def getGPU(): js.UndefOr[GPU] =
-    dom.window.navigator
-      .asInstanceOf[js.Dynamic]
-      .gpu
-      .asInstanceOf[js.UndefOr[GPU]]
+    // `typeof` on the bare global: a plain read of a missing one throws.
+    if js.typeOf(js.Dynamic.global.navigator) == "undefined" then js.undefined
+    else js.Dynamic.global.navigator.gpu.asInstanceOf[js.UndefOr[GPU]]
 
   /** Get WebGPU context from a canvas element */
   def getContext(canvas: HTMLCanvasElement): GPUCanvasContext =

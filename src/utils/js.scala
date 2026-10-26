@@ -57,6 +57,10 @@ extension [A](dict: Dict[A])
     js.DynamicImplicits.truthValue(
       dict.asInstanceOf[js.Dynamic].hasOwnProperty(key),
     )
+  inline def delete(key: String): Unit =
+    js.special.delete(dict, key)
+  inline def keys: Arr[String] =
+    js.Object.keys(dict.asInstanceOf[js.Object])
 
 type Arr[A] = js.Array[A]
 
