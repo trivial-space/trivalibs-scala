@@ -104,6 +104,6 @@ def main(): Unit =
 
         var total = 0
         for l <- lines do total += l.length
-        println(s"${lines.length} lines, $total vertices")
+        log(s"${lines.length} lines, $total vertices")
 
       p.paintAndShow(panel)

@@ -25,8 +25,8 @@ type ClearColor = Vec4
   *     (`textureSampleLevel`).
   * Built once alongside the texture; travels with it through swaps.
   *
-  * `blitGroup` is the `show` blit's bind group for this texture, built on
-  * first use. It travels with the bundle too, so pong swaps keep one group per
+  * `blitGroup` is the `show` blit's bind group for this texture, built on first
+  * use. It travels with the bundle too, so pong swaps keep one group per
   * texture and a reallocation (new bundles) starts empty — no keys or epochs.
   */
 private[painter] final class TextureViewBundle(
@@ -139,7 +139,8 @@ class Panel private[painter] (val painter: Painter):
   // The panel's format when it has no explicit `formats`: a `PixelImage`'s own
   // format, `Rgba8Unorm` for an external image.
   private var sourceDefaultFormat: TextureFormat = TextureFormat.Rgba8Unorm
-  private[painter] var sourcePixelFormat: TextureFormat = TextureFormat.Rgba8Unorm
+  private[painter] var sourcePixelFormat: TextureFormat =
+    TextureFormat.Rgba8Unorm
   private var sourceInSlot0: Boolean = false
   private var sourceTexture: Opt[GPUTexture] = null
   private[painter] var sourceViews: Opt[TextureViewBundle] = null
@@ -176,7 +177,8 @@ class Panel private[painter] (val painter: Painter):
       sourceBlend.isNull && !followSurface &&
       (specWidth == 0 || specWidth == sourceWidth) &&
       (specHeight == 0 || specHeight == sourceHeight) &&
-      formats.length <= 1 && effectiveFormats(0) == sourcePixelFormat
+      formats.length <= 1 &&
+      effectiveFormats(0).asString == sourcePixelFormat.asString
 
   /** Drawn path: the source texture is drawn first in the shape pass. */
   private[painter] def drawsSource: Boolean = hasSource && !directSource
@@ -265,7 +267,8 @@ class Panel private[painter] (val painter: Painter):
     if !depthSamplable && depthTexture.notNull then
       depthSamplable = true
       allocDepth()
-    if depthResolvePending then resolvedDepthView.get else depthAttachmentView.get
+    if depthResolvePending then resolvedDepthView.get
+    else depthAttachmentView.get
 
   /** Make a [[PanelBinding]] selecting one view of this panel to feed another
     * pass as a texture: a render-target `index`, a specific `mipLevel` (`-1` =
@@ -646,9 +649,9 @@ class Panel private[painter] (val painter: Painter):
 
   /** Resolve the panel size — explicit, else the source's own unless
     * `followSurface`, else the surface's — and reallocate when it or an
-    * allocation input changed. Keeps a source's pixels across the
-    * reallocation, and moves them between slot 0 and the source texture when
-    * the path changes.
+    * allocation input changed. Keeps a source's pixels across the reallocation,
+    * and moves them between slot 0 and the source texture when the path
+    * changes.
     */
   private[painter] def ensureSize(surfaceW: Int, surfaceH: Int): Unit =
     val useSource = hasSource && !followSurface

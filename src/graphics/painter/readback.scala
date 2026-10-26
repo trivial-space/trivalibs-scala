@@ -53,7 +53,7 @@ private[painter] final class Readback(device: GPUDevice):
     submitted += 1
     val index = submitted
     val frames: Opt[Arr[PixelData]] =
-      if js.Object.hasProperty(target.asInstanceOf[js.Object], "frames") then
+      if js.special.in("frames", target) then
         target.asInstanceOf[PixelFrames].frames
       else null
     // Reserve the frame's slot now, so frames land in `show` order even when

@@ -32,6 +32,7 @@ object PixelFormat:
 
   extension (f: PixelFormat)
     inline def toJs: js.Any = f.asInstanceOf[js.Any]
+    private[painter] inline def asString: String = f
     private[painter] inline def textureFormat: TextureFormat =
       TextureFormat.of(f)
 
@@ -228,7 +229,7 @@ object PixelTarget:
     */
   private[painter] def isPixelTarget(x: Any): Boolean =
     val obj = x.asInstanceOf[js.Object]
-    js.Object.hasProperty(obj, "frames") || js.Object.hasProperty(obj, "data")
+    js.special.in("frames", obj) || js.special.in("data", obj)
 
   /** Throws, prefixed with `where`, unless `target` is well-formed: one of the
     * three formats, a positive size, and an array `frames` or a `data` array of
@@ -252,7 +253,7 @@ object PixelTarget:
       )
     if !(width > 0 && height > 0) then
       throw jsError(s"$where: invalid pixel target size ${width}×$height")
-    if js.Object.hasProperty(target.asInstanceOf[js.Object], "frames") then
+    if js.special.in("frames", target) then
       if !js.Array.isArray(target.asInstanceOf[PixelFrames].frames) then
         throw jsError(s"$where: PixelFrames.frames must be an array")
     else

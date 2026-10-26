@@ -36,11 +36,10 @@ private[painter] object TextureSource:
     */
   def isPixelImage(source: TextureSource): Boolean =
     val obj = source.asInstanceOf[js.Object]
-    js.Object.hasProperty(obj, "data") && js.Object.hasProperty(obj, "format")
+    js.special.in("data", obj) && js.special.in("format", obj)
 
-  /** The pixel size of an external image, duck-typed in this order: a
-    * `<video>` and an `<img>` also have a `width`, but it is their layout
-    * size.
+  /** The pixel size of an external image, duck-typed in this order: a `<video>`
+    * and an `<img>` also have a `width`, but it is their layout size.
     */
   def width(source: ExternalImage): Int =
     size(source, "videoWidth", "naturalWidth", "displayWidth", "width")

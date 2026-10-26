@@ -35,7 +35,7 @@ trait Surface:
   /** Registers a resize listener, called with the new size. Never fires on
     * fixed-size surfaces.
     */
-  def onResize(cb: (Int, Int) => Unit): Unit
+  def onResize(cb: js.Function2[Int, Int, Unit]): Unit
 
 /** A browser canvas as a [[Surface]]. `configure` sets up the WebGPU context,
   * sizes the canvas to its client rect, and installs a `ResizeObserver` that
@@ -49,7 +49,7 @@ final class CanvasSurface private (
 ) extends Surface:
   private var queue: Opt[GPUQueue] = null
   private var context: Opt[GPUCanvasContext] = null
-  private val resizeCallbacks = Arr[(Int, Int) => Unit]()
+  private val resizeCallbacks = Arr[js.Function2[Int, Int, Unit]]()
 
   def width: Int = canvas.width
   def height: Int = canvas.height
@@ -92,7 +92,7 @@ final class CanvasSurface private (
   def present(encoder: GPUCommandEncoder): Unit =
     queue.get.submit(Arr(encoder.finish()))
 
-  def onResize(cb: (Int, Int) => Unit): Unit =
+  def onResize(cb: js.Function2[Int, Int, Unit]): Unit =
     resizeCallbacks.push(cb)
 
 object CanvasSurface:
@@ -128,7 +128,7 @@ private[painter] final class CaptureSurface(val target: PixelTarget)
 
   def configure(painter: Painter): Unit =
     val device = painter.device
-    if pixelFormat == PixelFormat.Rgba32Float &&
+    if pixelFormat.asString == PixelFormat.Rgba32Float.asString &&
       !device.features.has("float32-filterable")
     then
       throw jsError(
@@ -151,4 +151,4 @@ private[painter] final class CaptureSurface(val target: PixelTarget)
     readback.get.read(encoder, texture.get, target, pooled = true)
     ()
 
-  def onResize(cb: (Int, Int) => Unit): Unit = ()
+  def onResize(cb: js.Function2[Int, Int, Unit]): Unit = ()

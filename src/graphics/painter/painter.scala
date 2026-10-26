@@ -1977,7 +1977,7 @@ class Painter private[painter] (
   ): Unit =
     var group = panel.sourceGroup
     if group.isNull then
-      if panel.sourcePixelFormat == TextureFormat.Rgba32Float &&
+      if panel.sourcePixelFormat.asString == TextureFormat.Rgba32Float.asString &&
         !device.features.has("float32-filterable")
       then
         throw jsError(

@@ -88,7 +88,7 @@ object BufferTriangle:
     )
 
     val wgslCode = triangleShader.generateWGSL
-    dom.console.log("Generated WGSL:\n" + wgslCode)
+    log("Generated WGSL:\n" + wgslCode)
 
     // Create shader module
     val shaderModule = device.createShaderModule(
@@ -198,9 +198,7 @@ object BufferTriangle:
         fpsEl.textContent =
           s"${fps.toFixed(1)} FPS (${frameTime.toFixed(2)} ms/frame)"
         if time - lastFpsLog >= 1000.0 then
-          dom.console.log(
-            s"${fps.toFixed(1)} FPS — ${frameTime.toFixed(2)} ms/frame",
-          )
+          log(s"${fps.toFixed(1)} FPS — ${frameTime.toFixed(2)} ms/frame")
           lastFpsLog = time
         frameCount = 0
         lastFpsTime = time
