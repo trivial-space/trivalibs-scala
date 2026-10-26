@@ -82,7 +82,7 @@ final class CanvasSurface private (
               var k = 0
               while k < resizeCallbacks.length do
                 resizeCallbacks(k)(w, h)
-                k += 1
+                k += 1,
         ): js.Function1[js.Array[js.Dynamic], Unit],
       )
     observer.observe(canvas)

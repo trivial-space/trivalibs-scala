@@ -222,6 +222,44 @@ shape.bind("tex" := panel)
 painted; one that never appears in the per-frame `paint` list and isn't painted
 at construction stays blank, with no error anywhere.
 
+### 2d. An image as a panel's source
+
+A panel can start from an image instead of a render. `source` takes a
+`PixelImage` (raw RGBA in a typed array) or a browser image (`ImageBitmap`,
+`ImageData`, `<img>`, `<canvas>`, `OffscreenCanvas`, `<video>`, `VideoFrame`):
+
+```scala
+WebImages.load("assets/wall.png").map: bitmap =>
+  val wall = p.panel(source = bitmap, mips = true)   // its size, rgba8unorm
+  shape.bind("tex" := wall)
+
+val noise = p.panel(source = PixelImage(256, 256, halfFloats))  // rgba16float
+```
+
+- **Upload only on `set`.** `p.panel(source = …)` and `panel.set(source = …)`
+  upload once. After changing the image (rewritten `data`, a canvas drawn into,
+  the next video frame), call `set(source = …)` again. `paint` never re-reads
+  it.
+- **Size and format come from the source** unless you pass `width` / `height` or
+  `format`: a `PixelImage`'s own format, otherwise `rgba8unorm`. With
+  `followSurface = true` the panel tracks the canvas size instead, and the image
+  is stretched over it.
+- **A source alone needs no `paint`.** At its own size and format, with no
+  shapes or layers, the image is the panel's content right after `set`. That is
+  the opposite of a rendered static texture (2c).
+- **Shapes and layers paint over it**, in this order: clear color, source,
+  shapes, layers. The source is redrawn at the start of every paint, so pong
+  layers process the untouched image and never compound. With `depthTest`,
+  shapes always land on top of it. `sourceBlend = BlendState.Alpha` blends it
+  over the clear color instead of replacing it.
+- `WebImages.load` keeps the pixels bit-exact by default (no color-space
+  conversion, straight alpha), as data textures need; pass `colorManaged = true`
+  for a photo.
+- Not on MRT panels: bind a source panel as a texture of the MRT shapes instead.
+- `set(source = null)` removes the source and keeps the pixels already in the
+  panel. Pin the size in the same call (`width = …, height = …`) if it came from
+  the image.
+
 ## 3. Bindings
 
 `p.binding[T]` (or `p.binding(initialValue)`) makes a uniform buffer; update it

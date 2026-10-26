@@ -71,3 +71,16 @@ def render(
         painter.paintAndShow(panel)
 
       painter.awaitReadback()
+
+/** Feeds a decoded image back in as a panel `source` and shows it into a fresh
+  * `PixelImage` of the same size — on the direct path, so the result must equal
+  * the input byte for byte.
+  */
+@JSExportTopLevel("roundtrip", moduleID = "headless_triangle")
+def roundtrip(gpu: GPU, image: PixelImage): js.Promise[PixelImage] =
+  val out = PixelImage(image.width, image.height, image.format)
+  Painter
+    .init(out, gpu)
+    .flatMap: painter =>
+      painter.show(painter.panel(source = image))
+      painter.awaitReadback().map(_ => out)

@@ -290,3 +290,213 @@ class HeadlessPainterTest extends FunSuite:
           (0.75 * 255).round.toDouble,
           1.0,
         )
+
+  // ---- texture sources ----
+
+  private def pixels(image: PixelImage): Seq[Double] =
+    val data = image.data.asInstanceOf[js.Array[Double]]
+    (0 until image.width * image.height * 4).map(i => data(i))
+
+  // Distinct, deterministic RGBA bytes per pixel, alpha 255.
+  private def checker(w: Int, h: Int): PixelImage =
+    val image = PixelImage(w, h)
+    val data = image.data.asInstanceOf[Uint8Array]
+    var i = 0
+    while i < w * h do
+      data(i * 4) = ((i * 37 + 11) % 256).toShort
+      data(i * 4 + 1) = ((i * 91 + 7) % 256).toShort
+      data(i * 4 + 2) = ((i * 13 + 200) % 256).toShort
+      data(i * 4 + 3) = 255.toShort
+      i += 1
+    image
+
+  private def solid(w: Int, h: Int, r: Int, g: Int, b: Int, a: Int) =
+    val image = PixelImage(w, h)
+    val data = image.data.asInstanceOf[Uint8Array]
+    var i = 0
+    while i < w * h do
+      data(i * 4) = r.toShort
+      data(i * 4 + 1) = g.toShort
+      data(i * 4 + 2) = b.toShort
+      data(i * 4 + 3) = a.toShort
+      i += 1
+    image
+
+  private def inverted(image: PixelImage): Seq[Double] =
+    pixels(image).zipWithIndex.map((v, i) => if i % 4 == 3 then v else 255 - v)
+
+  private def invertLayer(p: Painter) =
+    val shade = p.layerShade[(samp: Sampler), (src: FragmentPanel)]: program =>
+      program.frag: ctx =>
+        val c = ctx.textures.src(ctx.in.uv, ctx.bindings.samp)
+        ctx.out.color := vec4(1.0 - c.x, 1.0 - c.y, 1.0 - c.z, 1.0)
+    p.layer(shade).bind("samp" := p.samplerNearest)
+
+  private def fullscreenShape(p: Painter, color: Vec3) =
+    type Attribs = (position: Vec2)
+    type Uniforms = (color: Vec3)
+    val shade = p.shade[Attribs, EmptyTuple, Uniforms](
+      vertWgsl = """
+        out.position = vec4<f32>(in.position, 0.5, 1.0);
+        """,
+      fragWgsl = """
+        out.color = vec4<f32>(color, 1.0);
+        """,
+    )
+    val vertices = allocateAttribs[Attribs](3)
+    vertices(0).set0(-1.0, -1.0)
+    vertices(1).set0(3.0, -1.0)
+    vertices(2).set0(-1.0, 3.0)
+    p.shape(p.form(vertices = vertices), shade).bind("color" := color)
+
+  test("a PixelImage source is shown exactly, without painting"):
+    val out = PixelImage(4, 3)
+    val src = checker(4, 3)
+    painterOn(out).flatMap: p =>
+      val panel = p.panel(source = src)
+      p.show(panel)
+      p.paint(panel)
+      p.show(panel)
+      p.awaitReadback().toFuture.map(_ => assertEquals(pixels(out), pixels(src)))
+
+  test("an rgba16float source keeps HDR values"):
+    val out = PixelImage(2, 2, PixelFormat.Rgba16Float)
+    val data = new Float16Array(16)
+    var i = 0
+    while i < 16 do
+      data(i) = if i % 4 == 3 then 1.0 else i * 0.5
+      i += 1
+    val src = PixelImage(2, 2, data)
+    painterOn(out).flatMap: p =>
+      p.show(p.panel(source = src))
+      p.awaitReadback().toFuture.map(_ => assertEquals(pixels(out), pixels(src)))
+
+  test("layers process the source fresh on every paint"):
+    val out = PixelImage(4, 3)
+    val src = checker(4, 3)
+    painterOn(out).flatMap: p =>
+      val panel = p.panel(source = src, layer = invertLayer(p))
+      p.paint(panel)
+      p.paint(panel)
+      p.show(panel)
+      p.awaitReadback().toFuture.map(_ => assertEquals(pixels(out), inverted(src)))
+
+  test("a source scales to an explicit size"):
+    val out = PixelImage(6, 4)
+    painterOn(out).flatMap: p =>
+      p.paintAndShow(
+        p.panel(source = solid(2, 2, 10, 120, 240, 255), width = 6, height = 4),
+      )
+      p.awaitReadback().toFuture.map: _ =>
+        assertEquals(
+          pixels(out),
+          Seq.fill(6 * 4)(Seq(10.0, 120.0, 240.0, 255.0)).flatten,
+        )
+
+  test("sourceBlend blends the source over the clear color"):
+    val out = PixelImage(2, 2)
+    painterOn(out).flatMap: p =>
+      p.paintAndShow(
+        p.panel(
+          source = solid(2, 2, 255, 0, 0, 128),
+          sourceBlend = BlendState.Alpha,
+          clearColor = (0.0, 0.0, 1.0, 1.0),
+        ),
+      )
+      p.awaitReadback().toFuture.map: _ =>
+        assertEqualsDouble(channel(out, 1, 1, 0), 128.0, 2.0)
+        assertEqualsDouble(channel(out, 1, 1, 2), 127.0, 2.0)
+
+  test("shapes land on top of the source, with depth and MSAA"):
+    val out = PixelImage(4, 4)
+    painterOn(out).flatMap: p =>
+      p.paintAndShow(
+        p.panel(
+          source = checker(4, 4),
+          depthTest = true,
+          multisample = true,
+          shape = fullscreenShape(p, Vec3(0.0, 1.0, 0.0)),
+        ),
+      )
+      p.awaitReadback().toFuture.map: _ =>
+        assertEquals(
+          pixels(out),
+          Seq.fill(16)(Seq(0.0, 255.0, 0.0, 255.0)).flatten,
+        )
+
+  test("a pong layer and MSAA added after the first paint reallocate"):
+    val out = PixelImage(2, 2)
+    painterOn(out).flatMap: p =>
+      val panel = p.panel(clearColor = (0.2, 0.4, 0.6, 1.0))
+      p.paint(panel)
+      panel.set(layer = invertLayer(p))
+      p.paint(panel)
+      panel.set(
+        multisample = true,
+        layers = Arr[AnyLayer](),
+        shape = fullscreenShape(p, Vec3(1.0, 0.0, 0.0)),
+      )
+      p.paint(panel)
+      val afterPong = PixelImage(2, 2)
+      p.showTo(panel, afterPong)
+      p.awaitReadback().toFuture.map: _ =>
+        assertEquals(pixels(afterPong).take(4), Seq(255.0, 0.0, 0.0, 255.0))
+
+  test("path switches and unsetting the source keep its pixels"):
+    val out = PixelImage(4, 3)
+    val src = checker(4, 3)
+    painterOn(out).flatMap: p =>
+      val panel = p.panel(source = src)
+      panel.set(layer = invertLayer(p))
+      p.paint(panel)
+      val drawn = p.showTo(panel, PixelImage(4, 3))
+      panel.set(layers = Arr[AnyLayer]())
+      val direct = p.showTo(panel, PixelImage(4, 3))
+      panel.set(source = null)
+      p.paint(panel)
+      val unset = p.showTo(panel, PixelImage(4, 3))
+      for
+        d <- drawn.toFuture
+        r <- direct.toFuture
+        u <- unset.toFuture
+      yield
+        assertEquals(pixels(d), inverted(src))
+        assertEquals(pixels(r), pixels(src))
+        assertEquals(pixels(u), pixels(src))
+
+  test("pixelsAt turns a frame into a source"):
+    val out = PixelImage(2, 2)
+    val frames = PixelFrames(2, 2)
+    frames.frames.push(checker(2, 2).data)
+    frames.frames.push(solid(2, 2, 1, 2, 3, 4).data)
+    painterOn(out).flatMap: p =>
+      p.show(p.panel(source = frames.pixelsAt(1)))
+      val error = intercept[js.JavaScriptException]:
+        frames.pixelsAt(2)
+      assert(error.getMessage.contains("PixelFrames.pixelsAt"))
+      p.awaitReadback().toFuture.map: _ =>
+        assertEquals(pixels(out), Seq.fill(4)(Seq(1.0, 2.0, 3.0, 4.0)).flatten)
+
+  test("a source on an MRT panel throws"):
+    val out = PixelImage(2, 2)
+    painterOn(out).map: p =>
+      val error = intercept[js.JavaScriptException]:
+        p.panel(
+          formats = Arr(TextureFormat.Rgba8Unorm, TextureFormat.Rgba8Unorm),
+          source = checker(2, 2),
+        )
+      assert(error.getMessage.contains("cannot have a source"))
+
+  test("followSurface stretches the source over the surface size"):
+    val out = PixelImage(5, 3)
+    painterOn(out).flatMap: p =>
+      val panel =
+        p.panel(source = solid(2, 2, 40, 80, 160, 255), followSurface = true)
+      p.paint(panel)
+      assertEquals((panel.panelWidth, panel.panelHeight), (5, 3))
+      p.show(panel)
+      p.awaitReadback().toFuture.map: _ =>
+        assertEquals(
+          pixels(out),
+          Seq.fill(15)(Seq(40.0, 80.0, 160.0, 255.0)).flatten,
+        )

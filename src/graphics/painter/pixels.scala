@@ -144,6 +144,23 @@ object PixelFrames:
       )
       .asInstanceOf[PixelFrames]
 
+  extension (sequence: PixelFrames)
+    /** Frame `index` as a [[PixelImage]] of the sequence's size and format,
+      * sharing its data — e.g. to set a decoded video frame as a panel
+      * `source`. Throws for an index outside `frames`.
+      */
+    def pixelsAt(index: Int): PixelImage =
+      if index < 0 || index >= sequence.frames.length then
+        throw jsError(
+          s"PixelFrames.pixelsAt: index $index outside 0 until ${sequence.frames.length}",
+        )
+      PixelImage.literal(
+        sequence.width,
+        sequence.height,
+        sequence.format,
+        sequence.frames(index),
+      )
+
 /** A single image. As a pixel target passed to [[Painter.init]], every `show`
   * overwrites `data` in place, so the reference stays valid and a host buffer
   * (e.g. pngjs's `png.data`) can be the target directly. `data` must have the
@@ -184,7 +201,7 @@ object PixelImage:
       )
     literal(width, height, format, data)
 
-  private def literal(
+  private[painter] def literal(
       width: Int,
       height: Int,
       format: PixelFormat,

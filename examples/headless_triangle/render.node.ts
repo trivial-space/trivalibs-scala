@@ -15,12 +15,13 @@
 //   pre-rendered-triangle.png      rgba8unorm PixelImage → 8-bit PNG
 //   pre-rendered-triangle-16.png   rgba16float PixelImage, intensity 4 (HDR)
 //                                  → 16-bit PNG, clamped to [0, 1]
-// and checks a 3-frame PixelFrames sequence.
+// checks a 3-frame PixelFrames sequence, and decodes the 8-bit PNG again to
+// feed it back in as a panel source (it must come out byte for byte).
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { create } from 'webgpu'
-import { encodePng } from '../example_helpers/png.ts'
-import { render } from '../out/headless_triangle.js'
+import { decodePng, encodePng } from '../example_helpers/png.ts'
+import { render, roundtrip } from '../out/headless_triangle.js'
 import type { PixelFrames, PixelImage } from '../example_helpers/pixels.d.ts'
 
 const args = process.argv.slice(2)
@@ -96,5 +97,11 @@ if (flag('--list-adapters')) {
     seq.frames.map((f) => center(f as Uint8Array)).join(', '),
   )
   console.log(`wrote ${outDir}/pre-rendered-triangle.png and pre-rendered-triangle-16.png`)
+
+  const decoded = decodePng(readFileSync(`${outDir}/pre-rendered-triangle.png`))
+  const source: PixelImage = { ...decoded, format: 'rgba8unorm' }
+  const back = await roundtrip(gpu, source)
+  const same = back.data.every((v, i) => v === source.data[i])
+  console.log(`PNG → PixelImage source → show: ${same ? 'byte for byte' : 'DIFFERS'}`)
 }
 

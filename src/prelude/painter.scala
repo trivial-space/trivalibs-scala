@@ -221,7 +221,11 @@ object painter:
 
   // Painter targets: surfaces and the offscreen pixel targets. `PixelFrames`
   // and `PixelImage` are `js.Object` traits, so they get the alias treatment.
-  export trivalibs.graphics.painter.`pixels$package`.{PixelTarget as _, *, given}
+  export trivalibs.graphics.painter.`pixels$package`.{
+    PixelTarget as _,
+    *,
+    given,
+  }
   export trivalibs.graphics.painter.{Surface, CanvasSurface, PixelTarget}
   type PixelFrames = trivalibs.graphics.painter.PixelFrames
   inline def PixelFrames: trivalibs.graphics.painter.PixelFrames.type =
@@ -229,6 +233,12 @@ object painter:
   type PixelImage = trivalibs.graphics.painter.PixelImage
   inline def PixelImage: trivalibs.graphics.painter.PixelImage.type =
     trivalibs.graphics.painter.PixelImage
+
+  // Panel sources: the `TextureSource` / `ExternalImage` types and browser
+  // image loading. `VideoFrame` is a native facade, so it gets an alias.
+  export trivalibs.graphics.painter.`sources$package`.*
+  export trivalibs.graphics.painter.WebImages
+  type VideoFrame = trivalibs.graphics.painter.VideoFrame
 
   // The raw WebGPU facades (`GPUDevice`, `GPUTexture`, …) are deliberately not
   // bundled: no sketch names them, they are the plumbing the Painter hides —

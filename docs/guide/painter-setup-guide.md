@@ -121,6 +121,21 @@ sketch's `assets/` and load it there instead of baking at startup. A float bake
 uses `rgba16float` (or `rgba32float`, §2.3) and a raw or KTX2 file rather than a
 PNG.
 
+The sketch loads the file back as a panel source:
+
+```scala
+WebImages.load("assets/wall.png").map: bitmap =>
+  val wall = p.panel(source = bitmap, mips = true)
+  shape.bind("tex" := wall)
+```
+
+Mip chains are regenerated on load (`mips = true`), not exported. A float asset
+is fetched as an `ArrayBuffer` and wrapped in a `PixelImage`. Offscreen, the
+same `PixelImage` can go straight back in as a `source` with no file in between,
+and a frame of a `PixelFrames` with `frames.pixelsAt(i)`.
+`examples/headless_triangle/` does both halves: `render.node.ts` bakes the PNG
+and feeds it back in, and its `index.html` loads it as a sprite texture.
+
 ### 1.6 Screenshot next to canvas rendering
 
 Any painter, a canvas one included, can write a painted panel into a pixel
@@ -355,6 +370,13 @@ interface PixelImage {
 - **`PixelImage`** — every `show` overwrites `data` **in place**, so the
   reference stays valid and a host buffer (e.g. pngjs's `png.data`) can be the
   target directly. When several `show`s are in flight, the last one wins.
+
+The same objects go the other way, as input: a `PixelImage` is a panel `source`
+(sketch authoring guide, 2d), uploaded as it is in its own `format`.
+`frames.pixelsAt(i)` wraps one frame of a `PixelFrames` as a `PixelImage` that
+shares its data — a host-decoded video, for example, set as the source frame by
+frame. `PixelTarget.validate(target)` runs the same checks the painter runs, for
+objects built or received elsewhere.
 
 ### 5.2 Formats
 

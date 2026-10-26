@@ -890,6 +890,15 @@ class Painter private[painter] (
     *   - `mips = true` (or `mipLevels = N`) — allocate a mip chain (see
     *     [[layer]] for hand-built chains vs auto-generation).
     *   - `depthTest`, `multisample` — enable depth buffering / MSAA.
+    *   - `source` — an image as the panel's background: a [[PixelImage]] or a
+    *     browser image ([[ExternalImage]]). It sizes the panel unless `width` /
+    *     `height` or `followSurface` say otherwise, and sets its default format
+    *     (the `PixelImage`'s, else `Rgba8Unorm`). Uploaded on `set` only.
+    *     Shapes and layers paint over it; `sourceBlend` blends it over the
+    *     clear color instead of replacing it. Not on MRT panels.
+    *   - `followSurface` — track the surface size with a source, which is then
+    *     stretched over it.
+    *   - `flipY`, `premultipliedAlpha` — upload options for browser images.
     *
     * Bind panel textures as inputs to other passes via `otherPanel`/`layer`
     * bindings and `panel.binding(index/mipLevel/depth)`.
@@ -908,6 +917,11 @@ class Painter private[painter] (
       shapes: Maybe[Arr[S]] = Maybe.Not,
       layer: Maybe[L] = Maybe.Not,
       layers: Maybe[Arr[L]] = Maybe.Not,
+      source: Maybe[Opt[TextureSource]] = Maybe.Not,
+      sourceBlend: Maybe[Opt[BlendState]] = Maybe.Not,
+      followSurface: Maybe[Boolean] = Maybe.Not,
+      flipY: Maybe[Boolean] = Maybe.Not,
+      premultipliedAlpha: Maybe[Boolean] = Maybe.Not,
   ): Panel = Panel(this).set(
     width = width,
     height = height,
@@ -922,6 +936,11 @@ class Painter private[painter] (
     shapes = shapes,
     layer = layer,
     layers = layers,
+    source = source,
+    sourceBlend = sourceBlend,
+    followSurface = followSurface,
+    flipY = flipY,
+    premultipliedAlpha = premultipliedAlpha,
   )
 
   // =========================================================================
@@ -1214,6 +1233,8 @@ class Painter private[painter] (
 
   private def paintPanel(panel: Panel): Unit =
     panel.ensureSize(width.toInt, height.toInt)
+    // The source's pixels already are the whole content, uploaded by `set`.
+    if panel.directSource then return
     val msaa = panel.multisample
 
     // Step 1: render shapes into main texture(s)
@@ -1269,6 +1290,8 @@ class Painter private[painter] (
 
     // Step 1: Render shapes (with depth/msaa from panel config)
     val shapePass = encoder.beginRenderPass(passDesc)
+
+    if panel.drawsSource then drawSource(shapePass, panel, msaa, panelFormats)
 
     var i = 0
     while i < panel.shapes.length do
@@ -1745,6 +1768,9 @@ class Painter private[painter] (
       cullMode: CullMode = CullMode.None,
       frontFace: FrontFace = FrontFace.CCW,
       indexFormat: Opt[String] = null,
+      // A background draw: passes every depth test and writes no depth, so
+      // the shapes after it always land on top.
+      depthAlways: Boolean = false,
   ): GPURenderPipeline =
     // Only strip topologies take a stripIndexFormat, and they *must* have one
     // to be drawn indexed — the primitive restart index depends on it.
@@ -1760,8 +1786,10 @@ class Painter private[painter] (
       if stripIndexFormat.isNull then ""
       else if stripIndexFormat.get == "uint32" then "4"
       else "2"
+    val depthKey =
+      if !depthTest then "n" else if depthAlways then "a" else "l"
     val key =
-      s"${shade.id}|${blendKeyStr(blendState)}|${formats.asInstanceOf[Arr[String]].join(",")}|$depthTest|$multisample|${topology}|${cullMode}|${frontFace}$stripKey"
+      s"${shade.id}|${blendKeyStr(blendState)}|${formats.asInstanceOf[Arr[String]].join(",")}|$depthKey|$multisample|${topology}|${cullMode}|${frontFace}$stripKey"
     // One lookup, not a `has` + `at` pair — this runs per draw call.
     val cached = pipelineCache.at(key)
     if !js.isUndefined(cached.asInstanceOf[js.Any]) then cached
@@ -1807,8 +1835,8 @@ class Painter private[painter] (
       if depthTest then
         desc.depthStencil = Obj.literal(
           format = "depth24plus",
-          depthWriteEnabled = true,
-          depthCompare = "less",
+          depthWriteEnabled = !depthAlways,
+          depthCompare = if depthAlways then "always" else "less",
         )
       if multisample then desc.multisample = Obj.literal(count = 4)
       val p = device.createRenderPipeline(desc)
@@ -1917,6 +1945,72 @@ class Painter private[painter] (
       p
 
   // =========================================================================
+  // Source draw — a panel's texture source as the shape pass's first draw
+  // =========================================================================
+
+  // The blit shader as a shade, so the source draw goes through the shape
+  // pipeline cache: the key covers the panel's formats, MSAA, depth and the
+  // source blend.
+  private lazy val sourceShade: Shade[EmptyTuple, EmptyTuple] =
+    val id = nextShadeId
+    nextShadeId += 1
+    Shade[EmptyTuple, EmptyTuple](
+      id,
+      blitModule,
+      null,
+      null,
+      null,
+      blitPipelineLayout,
+      false,
+      Dict[Int](),
+      Dict[Int](),
+    )
+
+  /** Draw `panel`'s source texture over the whole target, linearly scaled to
+    * the panel size. It passes every depth test and writes no depth.
+    */
+  private def drawSource(
+      pass: GPURenderPassEncoder,
+      panel: Panel,
+      multisample: Boolean,
+      formats: Arr[TextureFormat],
+  ): Unit =
+    var group = panel.sourceGroup
+    if group.isNull then
+      if panel.sourcePixelFormat == TextureFormat.Rgba32Float &&
+        !device.features.has("float32-filterable")
+      then
+        throw jsError(
+          "Panel: drawing an rgba32float source needs the device feature " +
+            "'float32-filterable'. Pass requiredFeatures = " +
+            "Arr(\"float32-filterable\") to Painter.init, use rgba16float, or " +
+            "keep the panel on the direct path (source size and format, no " +
+            "shapes or layers).",
+        )
+      group = device.createBindGroup(
+        Obj.literal(
+          layout = blitBindGroupLayout,
+          entries = Arr(
+            Obj.literal(binding = 0, resource = panel.sourceViews.get.sampling),
+            Obj.literal(binding = 1, resource = samplerLinear),
+          ),
+        ),
+      )
+      panel.sourceGroup = group
+    pass.setPipeline(
+      getPipeline(
+        sourceShade,
+        panel.sourceBlend,
+        formats,
+        panel.depthTest,
+        multisample,
+        depthAlways = true,
+      ),
+    )
+    pass.setBindGroup(0, group.get)
+    pass.draw(3)
+
+  // =========================================================================
   // MSAA depth resolve — single-sample depth from a multisample attachment
   // =========================================================================
 
@@ -1998,12 +2092,10 @@ class Painter private[painter] (
       Obj.literal(magFilter = "linear", minFilter = "linear"),
     )
 
-  private def generateMipmaps(panel: Panel): Unit =
+  private[painter] def generateMipmaps(panel: Panel): Unit =
     val mipCount = panel.mipLevelCount
     if mipCount <= 1 then return
-    val fmt =
-      if panel.formats.length > 0 then panel.formats(0) else preferredFormat
-    val pipeline = blitPipelineFor(fmt)
+    val pipeline = blitPipelineFor(panel.effectiveFormats(0))
 
     var i = 1
     while i < mipCount do

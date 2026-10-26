@@ -2,35 +2,6 @@
 
 ## Panel / Textures
 
-### 🔄 `with_static_texture_data(bytes)` on Panel
-
-> Now planned as Milestone 2 of
-> [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md)
-> (`Pixels` / `TextureSource` panel sources). Remove this entry when M2.0 lands.
-
-**Gap:** Rust's `Panel::with_static_texture_data(bytes)` is the canonical way to
-load an image / baked texture into a panel's render target. The Scala Panel has
-no direct equivalent — callers must build a `GPUTexture` with usage
-`COPY_DST | TEXTURE_BINDING` via the raw device and bind it by hand.
-
-**Required changes:**
-
-- Add a `staticTextureData` param (or a dedicated
-  `setStaticTextureData(bytes, format, width, height)` method) on `Panel` /
-  `painter.panel(...)`.
-- Internally: create the `GPUTexture` with `COPY_DST | TEXTURE_BINDING`, call
-  `queue.writeTexture`, and wire the texture view as the panel's output so
-  downstream `Layer`s sampling the panel see the baked pixels.
-- Default format / dimensions from `bytes` or require explicit args — match
-  Rust's signature.
-
-**Doc follow-up:** Once added, remove the gap bullet from
-[scala-port-comparison.md §12](rust-painter/scala-port-comparison.md) and add
-the param row to the Panel table in §3.
-
-**Priority:** Medium — unblocks any example that needs a baked image texture
-(image-based sketches, reference LUTs, etc.).
-
 ### 🔄 MRT: a generative layer as an alternative to shapes
 
 **Goal:** an MRT panel (several `formats`) can be filled by **one generative

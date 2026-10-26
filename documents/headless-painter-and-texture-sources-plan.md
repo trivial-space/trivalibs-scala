@@ -2,15 +2,17 @@
 
 **Status: Milestone 1 (M1.0–M1.4) done: implemented, verified (including the
 browser check of all examples by hand), and its code reviewed in PR #3 with all
-review comments addressed (§9, 2026-10-26). Milestone 2 planned. §1–3
-(Milestone 1) reviewed and approved; §4 onward (Milestone 2) not yet reviewed.**
-Scope is **offline render to file**, not on-screen rendering outside the
-browser. Takes over the host seam and the headless phase of
-[non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its `RenderHost` becomes
-`Surface` here); native-window hosts (Deno windows, NativeScript) stay a
-separate issue in that document, and §3.11 lists what this API must keep
-compatible with them. Also absorbs the `with_static_texture_data(bytes)` gap
-from [independent-todos.md](independent-todos.md).
+review comments addressed (§9, 2026-10-26). Milestone 2: M2.0a, M2.0, M2.0b and
+M2.1 implemented and headless-tested, the browser check of the new examples by
+hand pending; M2.2 dropped (§6). §1–3 (Milestone 1) reviewed and approved; §4
+onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**,
+not on-screen rendering outside the browser. Takes over the host seam and the
+headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
+`RenderHost` becomes `Surface` here); native-window hosts (Deno windows,
+NativeScript) stay a separate issue in that document, and §3.11 lists what this
+API must keep compatible with them. Also absorbs the
+`with_static_texture_data(bytes)` gap from
+[independent-todos.md](independent-todos.md).
 
 Two milestones:
 
@@ -988,13 +990,14 @@ Raw buffers enter as a `PixelImage` (§3.5) — `{ width, height, format, data }
 the same exchange format as the output side, creatable in TS or Scala. It is the
 equivalent of Rust's `with_static_texture_data(bytes)`, with size and format
 explicit because bytes carry neither. One frame of a `PixelFrames` container
-converts by pairing it with the container's size and format, so a frame read
-back in one run can be fed straight back in.
+converts with the extension `frames.pixelsAt(i)`, which pairs it with the
+container's size and format (the container's shape stays the plain data
+contract), so a frame read back in one run can be fed straight back in.
 
-Runtime dispatch is duck-typed on our contract: **an object with a `format`
-field is a `PixelImage` → `writeTexture`; anything else →
-`copyExternalImageToTexture`**. (`ImageData` also has `width`/`height`/`data`
-but no `format`, so it takes the external path.) Never
+Runtime dispatch is duck-typed on our contract: **an object with both a `data`
+and a `format` field is a `PixelImage` → `writeTexture`; anything else →
+`copyExternalImageToTexture`**. (`ImageData` has `data` but no `format`, a
+`VideoFrame` has `format` but no `data`, so both take the external path.) Never
 `instanceof HTMLImageElement` — referencing a DOM global throws in Node. Size of
 external sources is duck-typed in this order: `videoWidth` (video) →
 `naturalWidth` (img) → `displayWidth` (VideoFrame) → `width` (bitmap, ImageData,
@@ -1111,31 +1114,37 @@ The path is decided from the configuration, never from a size that only matches
 by coincidence. A `followSurface` panel always takes the drawn path.
 
 - **Direct path.** It applies when the panel's size equals the source's size (by
-  rule 3, or an explicit equal size), and there are **no shapes and no
-  `sourceBlend`**. A `PixelImage` must also match the panel's format, because
-  `writeTexture` doesn't convert. External images convert in
-  `copyExternalImageToTexture`. A clear color doesn't disqualify the path,
-  because a replacing source overdraws it anyway.
-  - **Without layers**, the upload goes **straight into slot 0**: eagerly on
-    `set(source = …)`, the only upload trigger. Paint does nothing else, apart
-    from mips. This is the static-asset case: an image that is only ever
-    sampled. The upload can be eager because this path's size never depends on
-    the surface, so `set` can allocate slot 0 itself.
-  - **With layers** (blur, color grading, any effect stack), the source keeps
-    its **own texture**, and each paint starts with one `copyTextureToTexture`
-    into slot 0. Then the layers run as usual. The copy restores the untouched
-    source on every paint, so pong layers process the image fresh and never
-    compound. It needs `COPY_SRC` on the source texture and `COPY_DST` on
-    slot 0.
-- **Drawn path.** Every other case: shapes, `sourceBlend`, a size that differs,
-  or `followSurface`. The source keeps its own texture at its own size and
-  format, and each paint draws it as described above.
+  rule 3, or an explicit equal size), its format equals the format of the
+  source's pixels, and there are **no shapes, no layers and no `sourceBlend`**.
+  A `PixelImage`'s pixels are in its own format, because `writeTexture` doesn't
+  convert; an external image's are in the panel's format at upload time,
+  converted by `copyExternalImageToTexture`. A clear color doesn't disqualify
+  the path, because a replacing source overdraws it anyway. The upload goes
+  **straight into slot 0**: eagerly on `set(source = …)`, the only upload
+  trigger. Paint does nothing at all; mips are generated after the upload. This
+  is the static-asset case: an image that is only ever sampled. The upload can
+  be eager because this path's size never depends on the surface, so `set` can
+  allocate slot 0 itself.
+- **Drawn path.** Every other case: shapes, layers, `sourceBlend`, a size or
+  format that differs, or `followSurface`. The source keeps its own texture at
+  its own size and format, and each paint draws it as described above. With
+  layers (blur, color grading, any effect stack) the draw restores the untouched
+  source on every paint, so pong layers process the image fresh and never
+  compound.
+
+  _As built:_ the planned "layered direct path" — a `copyTextureToTexture` into
+  slot 0 instead of the draw when only layers are added — is dropped. At equal
+  size the draw samples texel centers and is exact too, so the copy would only
+  save one fullscreen draw per paint, for a third path to maintain.
 
 **Switching paths** keeps the pixels. When the source needs its own texture and
 has none, the current slot-0 texture becomes the source texture, and a fresh
-slot 0 is allocated. When it no longer needs one, the source texture becomes
-slot 0. No re-upload is needed, which matters for a `VideoFrame` the caller has
-already closed.
+slot 0 is allocated. When it no longer needs one, the source texture is copied
+into slot 0 (same size and format by the direct path's conditions) and freed. No
+re-upload is needed, which matters for a `VideoFrame` the caller has already
+closed. A reallocation on the direct path (say `mips = true` after the upload)
+goes the same way: slot 0 is kept as the source texture across it and copied
+back.
 
 #### Format and usage
 
@@ -1288,11 +1297,11 @@ the library, so nothing can leak into a Vite bundle.
 
 ### 4.4 Video, consistently
 
-| Environment | Source                                                                                   | Path                                        |
-| ----------- | ---------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Browser     | `HTMLVideoElement`, `panel.set(source = video)` (later `WebVideo.autoUpload`)            | copy per `set` (later per new video frame)  |
-| Browser     | WebCodecs `VideoFrame`, `panel.set(source = f)`                                          | copy per frame (Firefox: via `ImageBitmap`) |
-| Offline     | host decodes (ffmpeg → raw RGBA) into a `PixelFrames`; Scala sets each frame as `source` | `writeTexture` per frame                    |
+| Environment | Source                                                                                             | Path                                        |
+| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Browser     | `HTMLVideoElement`, `panel.set(source = video)` (later `WebVideo.autoUpload`)                      | copy per `set` (later per new video frame)  |
+| Browser     | WebCodecs `VideoFrame`, `panel.set(source = f)`                                                    | copy per frame (Firefox: via `ImageBitmap`) |
+| Offline     | host decodes (ffmpeg → raw RGBA) into a `PixelFrames`; Scala sets `frames.pixelsAt(i)` as `source` | `writeTexture` per frame                    |
 
 So video is "a source that changes every frame" — the same panel API as a still.
 Offline, the same exchange format runs both ways: the host hands in a decoded
@@ -1434,7 +1443,8 @@ against the shipped API.
 
 ### Milestone 2 — texture sources
 
-**M2.0a — unified panel allocation (§4.2, "Allocation").**
+**M2.0a — unified panel allocation (§4.2, "Allocation").** ✅ implemented,
+headless-tested; browser check pending.
 
 - Extract `reallocate(w, h)` from `ensureSize`. `set` raises `needsRealloc` when
   a property that affects allocation changes: formats, MSAA, depth, mips, pong
@@ -1446,7 +1456,8 @@ against the shipped API.
 - _Proof:_ an example that toggles a pong layer and MSAA at runtime. All
   examples render unchanged.
 
-**M2.0 — static sources, the core (§4.1, §4.2).** The asset case.
+**M2.0 — static sources, the core (§4.1, §4.2).** The asset case. ✅
+implemented, headless-tested; browser check pending.
 
 - `TextureSource`, `PixelImage` + external-image upload, with `flipY` and
   `premultipliedAlpha`.
@@ -1459,22 +1470,27 @@ against the shipped API.
   downstream. Close the `with_static_texture_data` entry in
   `independent-todos.md`.
 
-**M2.0b — sources in composition (§4.2).** The contributor stack.
+**M2.0b — sources in composition (§4.2).** The contributor stack. ✅
+implemented, headless-tested; browser check pending.
 
 - The drawn path: the source as the first draw of the shape pass. It needs a
   depth mode in the pipeline key, and supports `sourceBlend` and MSAA.
 - `followSurface` and scaling by panel size.
-- The layered direct path, which starts each paint with a `copyTextureToTexture`
-  into slot 0.
+- ~~The layered direct path, which starts each paint with a
+  `copyTextureToTexture` into slot 0.~~ Dropped: layers take the drawn path
+  (§4.2, "Paths").
 - Path switching that trades the textures instead of re-uploading.
 - _Proof:_ examples with an image background under shapes (with depth), an image
   with a blur / grade layer stack, and a `followSurface` background.
 
-**M2.1 — loading (§4.3).**
+**M2.1 — loading (§4.3).** ✅ implemented; the offline roundtrip runs, the
+browser check is pending.
 
 - `WebImages.load`.
 - _Proof:_ a browser example with a loaded image panel, and an offline driver
-  that decodes a PNG it wrote (sharp) and feeds it back in as a `PixelImage`.
+  that decodes a PNG it wrote and feeds it back in as a `PixelImage` (decoded by
+  the helpers' own `decodePng` over `node:zlib`, not sharp, so `webgpu` stays
+  the drivers' only dependency).
 - _Proof, roundtrip:_ `headless_triangle` grows into the full §4.5 workflow. Its
   committed `assets/pre-rendered-triangle.png` is loaded by a second Scala entry
   and an `index.html` in the same folder, with `WebImages.load`, and drawn as a
@@ -1483,11 +1499,11 @@ against the shipped API.
   baked file loaded back as a panel texture with `WebImages.load` (PR #3
   review).
 
-**M2.2 — offline video input (§4.4).**
-
-- Host-decoded `PixelFrames` in, each frame `set` as the source, processed,
-  `PixelFrames` out.
-- _Proof:_ offline video in → processed → video out.
+**~~M2.2 — offline video input (§4.4).~~** Dropped: it adds no functionality of
+its own. Feeding decoded frames back in is manual —
+`panel.set(source = frames.pixelsAt(i))` per frame — with `pixelsAt` added to
+M2.0 as a `PixelFrames` extension, so the container keeps its plain data shape.
+An offline video-processing example can follow whenever one is wanted.
 
 ### Later — follow-ups, not in this plan
 
@@ -1895,6 +1911,45 @@ Not committed yet.
     in `panel.scala` go with M2.0a.
 
 **Review closed: M1 done.**
+
+### 2026-10-26 — M2.0a, M2.0, M2.0b, M2.1
+
+Not committed yet. Headless tests (`HeadlessPainter.test.scala`, 12 new) cover
+every path; the browser examples build but are not checked by hand yet.
+
+1. **Allocation (M2.0a).** `Panel.ensureSize` resolves the size and calls a
+   private `reallocate(w, h)` when the size, `needsRealloc` or the usage
+   coverage changed. `set` compares an allocation key (formats — a source's
+   default one when none are set —, MSAA, depth, mip setting, pong need) before
+   and after. Usage is compared in `ensureSize`, as coverage. Turning depth off
+   now frees the depth texture. The `_` prefixes in `panel.scala` are gone.
+2. **Sources (M2.0, M2.0b)** live in `panel.scala` (state, paths, upload) and
+   the new `sources.scala` (`ExternalImage`, `TextureSource`, the upload, the
+   `VideoFrame` type facade, `WebImages`). The painter adds the source draw: the
+   blit shader as an internal shade through `getPipeline`, whose key gained a
+   depth mode (`depthAlways`: compare `always`, no depth writes).
+3. **Deviations from §4:**
+   - `PixelImage` dispatch checks `data` _and_ `format`: a `VideoFrame` has a
+     `format` field (§4.1).
+   - No layered direct path; layers take the drawn path (§4.2, "Paths").
+   - `set(source = null)` on a panel without explicit `formats` pins the
+     source's format, so the pixels survive the unset instead of being
+     reallocated into the preferred format.
+   - `writeTexture` gets the typed array's `ArrayBuffer` plus offset: Dawn
+     (node-webgpu) rejects a `Float16Array` view.
+   - An rgba32float source on the drawn path needs `float32-filterable` (a
+     linear sampler), checked with a clear error; the direct path does not.
+4. **`PixelFrames.pixelsAt(i)`** (extension in the companion) replaces M2.2.
+5. **Examples:** `panel_realloc` (M2.0a), `texture_source` (M2.0: a `PixelImage`
+   re-uploaded every second, a 2D canvas with mips), `source_composition`
+   (M2.0b: background under depth-tested MSAA shapes, a blur + grade stack,
+   `sourceBlend`; click to cycle), and `headless_triangle` with an `index.html`
+   loading the baked PNG as a sprite texture (M2.1). Its `render.node.ts`
+   decodes the PNG again and feeds it back in through a `roundtrip` export: byte
+   for byte.
+6. **Docs:** sketch authoring guide §2d (image as a panel source), setup guide
+   §1.5 load snippet and §5.1 input direction. The `with_static_texture_data`
+   todo and its port-comparison gap are closed.
 
 ## Sources
 

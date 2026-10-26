@@ -330,7 +330,7 @@ Rust `Layer` constructor options:
 | `.with_mips()`                                          | `panel.set(mipLevels = 0)` (0 = full chain)                                                  |
 | `.with_format(fmt)`                                     | `panel.set(format = "rgba16float")` (singular; plural `formats = Arr(...)` takes precedence) |
 | `.with_mrt_formats([a, b, c])` / `with_formats`         | `panel.set(formats = Arr("rgba8unorm", "rgba16float", "rgba16float"))`                       |
-| `.with_static_texture_data(bytes)`                      | **not yet** (see [§12](#12-known-gaps--workarounds))                                         |
+| `.with_static_texture_data(bytes)`                      | `panel.set(source = PixelImage(w, h, bytes))` (or a browser image)                           |
 | `.set_layer_bindings(...)` / `.set_value_bindings(...)` | `panel.bind("name" := value, ...)`                                                           |
 
 The Scala Panel's constructor also accepts all of the above as constructor
@@ -967,9 +967,6 @@ updates, and `painter.draw`.
 - **Compute shaders, indirect draws, async buffer readback, `BufferMapping`.**
   Facades in [webgpu/facades.scala](../../src/webgpu/facades.scala) cover
   render-pass-only code.
-- **`with_static_texture_data(bytes)` on Panel.** No direct API — currently must
-  create a `GPUTexture` with usage `COPY_DST | TEXTURE_BINDING` through the
-  device and bind it manually.
 - **`bind_uvec2`, `bind_quat`.** Need `UniformValue[UVec2]` /
   `UniformValue[Quat]` givens. Straightforward to add.
 - **2D-line / icosphere mesh builders.** `Box`, `sphereMesh`, `Grid` are ported;

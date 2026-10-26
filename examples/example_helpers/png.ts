@@ -1,8 +1,9 @@
-// Minimal PNG encoder for the headless example drivers: RGBA, 8 or 16 bit,
-// no filtering, over `node:zlib` — keeps `webgpu` the drivers' only dependency.
-// 16-bit input is float data, clamped to [0, 1].
+// Minimal PNG encoder and decoder for the headless example drivers, over
+// `node:zlib` — keeps `webgpu` the drivers' only dependency. The encoder writes
+// RGBA, 8 or 16 bit, no filtering; 16-bit input is float data, clamped to
+// [0, 1]. The decoder reads 8-bit RGBA, non-interlaced.
 
-import { deflateSync } from 'node:zlib'
+import { deflateSync, inflateSync } from 'node:zlib'
 
 export function encodePng(w: number, h: number, data: ArrayLike<number>, depth: 8 | 16): Uint8Array {
   const bpc = depth / 8
@@ -63,4 +64,52 @@ function concat(parts: Uint8Array[]): Uint8Array {
     o += p.length
   }
   return out
+}
+
+export function decodePng(png: Uint8Array): { width: number; height: number; data: Uint8Array } {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  let width = 0
+  let height = 0
+  const idat: Uint8Array[] = []
+  let o = 8
+  while (o < png.length) {
+    const length = dv.getUint32(o)
+    const type = String.fromCharCode(...png.subarray(o + 4, o + 8))
+    const body = png.subarray(o + 8, o + 8 + length)
+    if (type === 'IHDR') {
+      width = dv.getUint32(o + 8)
+      height = dv.getUint32(o + 12)
+      if (body[8] !== 8 || body[9] !== 6 || body[12] !== 0)
+        throw new Error('decodePng: only 8-bit RGBA, non-interlaced')
+    } else if (type === 'IDAT') idat.push(body)
+    o += 12 + length
+  }
+  const raw = inflateSync(concat(idat))
+  const stride = width * 4
+  const data = new Uint8Array(stride * height)
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]
+    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1))
+    for (let i = 0; i < stride; i++) {
+      const a = i >= 4 ? data[y * stride + i - 4] : 0
+      const b = y > 0 ? data[(y - 1) * stride + i] : 0
+      const c = i >= 4 && y > 0 ? data[(y - 1) * stride + i - 4] : 0
+      const predicted =
+        filter === 0 ? 0
+        : filter === 1 ? a
+        : filter === 2 ? b
+        : filter === 3 ? (a + b) >> 1
+        : paeth(a, b, c)
+      data[y * stride + i] = (line[i] + predicted) & 255
+    }
+  }
+  return { width, height, data }
+}
+
+function paeth(a: number, b: number, c: number): number {
+  const p = a + b - c
+  const pa = Math.abs(p - a)
+  const pb = Math.abs(p - b)
+  const pc = Math.abs(p - c)
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c
 }

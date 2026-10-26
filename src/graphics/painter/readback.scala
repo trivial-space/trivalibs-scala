@@ -73,7 +73,14 @@ private[painter] final class Readback(device: GPUDevice):
         else
           val last = imageWrites.get(image)
           if js.isUndefined(last) || last.asInstanceOf[Int] < index then
-            PixelData.copyRows(mapped, image.data, format, width, height, bytesPerRow)
+            PixelData.copyRows(
+              mapped,
+              image.data,
+              format,
+              width,
+              height,
+              bytesPerRow,
+            )
             imageWrites.set(image, index)
         buffer.unmap()
         if pooled then release(size, buffer)
@@ -122,7 +129,8 @@ private[painter] final class Readback(device: GPUDevice):
   private def release(size: Int, buffer: GPUBuffer): Unit =
     val key = size.toString
     val pool = stagingPool.at(key)
-    if js.isUndefined(pool.asInstanceOf[js.Any]) then stagingPool.set(key, Arr(buffer))
+    if js.isUndefined(pool.asInstanceOf[js.Any]) then
+      stagingPool.set(key, Arr(buffer))
     else pool.push(buffer)
 
 // A JS `WeakMap` from objects to ints.

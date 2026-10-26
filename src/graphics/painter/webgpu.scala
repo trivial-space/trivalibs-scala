@@ -188,6 +188,7 @@ trait GPUBuffer extends js.Object:
   val size: Double = js.native
   def destroy(): Unit = js.native
   def mapAsync(mode: Int): js.Promise[Unit] = js.native
+
   /** A temporary view of the mapped memory, detached on [[unmap]]. */
   def getMappedRange(): ArrayBuffer = js.native
   def unmap(): Unit = js.native
@@ -259,7 +260,8 @@ opaque type PowerPreference = String
 object PowerPreference:
   val HighPerformance: PowerPreference = "high-performance"
   val LowPower: PowerPreference = "low-power"
-  extension (p: PowerPreference) inline def toJs: js.Any = p.asInstanceOf[js.Any]
+  extension (p: PowerPreference)
+    inline def toJs: js.Any = p.asInstanceOf[js.Any]
 
 // =============================================================================
 // Helpers
@@ -285,7 +287,8 @@ object WebGPU:
     *   - `powerPreference`, `forceFallbackAdapter` — the spec hints;
     *     `forceFallbackAdapter = true` asks for the software adapter.
     *   - `requireAdapter` — rejects the promise unless it returns true for the
-    *     adapter's info; the message lists what was found. See [[adapterNamed]].
+    *     adapter's info; the message lists what was found. See
+    *     [[adapterNamed]].
     *   - `logAdapter` — prints the adapter info once.
     */
   def requestAdapter(
