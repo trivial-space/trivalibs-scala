@@ -62,8 +62,8 @@ val shade = p.shade[Attribs, Varyings, Uniforms, Panels]: program =>
 `layerShade[U]` (or `[U, P]`, `[U, P, FO]`) is fragment-only; the vertex stage
 is a built-in full-screen triangle and `ctx.in.uv: Vec2` is the screen UV in
 `[0,1]`, **origin top-left** (`uv.y == 0` is the top row). A layer with no
-uniforms at all takes no type argument — write `p.layerShade: program => …`,
-not `p.layerShade[EmptyTuple]`.
+uniforms at all takes no type argument — write `p.layerShade: program => …`, not
+`p.layerShade[EmptyTuple]`.
 
 ## Locals
 
@@ -109,7 +109,7 @@ col := someFloatExpr        // ✗ Cannot assign a FloatExpr to a shader local o
 ctx.out.color := 0.5        // ✗ …of type Vec4Expr.
 ```
 
-The right-hand side must therefore be a *typed* expression. `Expr.raw` yields a
+The right-hand side must therefore be a _typed_ expression. `Expr.raw` yields a
 bare `Expr`, which carries no element type and so fits no slot — reach for the
 typed constructor instead (`Vec3Expr("…")`, `Vec4Expr("…")`), which emits the
 same WGSL.
@@ -146,8 +146,8 @@ statement (WGSL has no `col += …` without a prior `var col`).
 take any expression and let WGSL decide. That is partly by nature — WGSL
 broadcasts a scalar across `+ - * /` for vectors, so `vec3Var += floatExpr` is
 legal and useful — but it also means a genuine mismatch like
-`mat3Var += floatExpr` compiles in Scala and fails in WGSL. Keep the operands
-in a combination WGSL accepts.
+`mat3Var += floatExpr` compiles in Scala and fails in WGSL. Keep the operands in
+a combination WGSL accepts.
 
 A compound op never declares a local, so a mismatch here cannot hide behind a
 name the way a bad declaration can — WGSL rejects it at the line as written.
@@ -187,17 +187,16 @@ GPU expressions mirror the CPU math surface, so shader code reads like CPU code:
 
 - **scalars** (`FloatExpr`): `+ - * /`,
   `.sqrt .pow .sin .cos .tan .abs .floor .ceil .fract .exp .log .min .max .clamp .clamp01 .mix .step .smoothstep .smoothstep01 .fit0111 .fit1101`.
-  `.smoothstep01` is `.smoothstep(0, 1)` with the edges folded into the
-  equation — the common case, since a `t` already in `[0,1]` only wants the
-  ease.
+  `.smoothstep01` is `.smoothstep(0, 1)` with the edges folded into the equation
+  — the common case, since a `t` already in `[0,1]` only wants the ease.
 - **vectors** (`Vec2/3/4Expr`): component-wise `+ - * /` (vector or scalar),
   `.dot .cross(Vec3) .length .distance .normalize .mix .clamp .min .max .abs .fract`,
   swizzles `.xy .xyz .rgb .wzyx …`.
 - **constructors**: `vec2(x,y)`, `vec3(xy, z)`, `vec4(rgb, 1.0)`,
   `vec3(scalar)`.
-- **free-standing `lerp(a, b, t)`** — WGSL's `mix` argument order, as a
-  function rather than a method. Reach for it when the **bounds are constants
-  and only `t` varies**, which is the case the method form cannot express:
+- **free-standing `lerp(a, b, t)`** — WGSL's `mix` argument order, as a function
+  rather than a method. Reach for it when the **bounds are constants and only
+  `t` varies**, which is the case the method form cannot express:
   `0.8.mix(1.0, expr)` does not compile (a CPU `Double` receiver takes `Double`
   arguments), whereas `lerp(0.8, 1.0, expr)` does. With an expression receiver
   the method form reads better — `noise.lerpIn(0.8, 1.0)`.
@@ -205,14 +204,13 @@ GPU expressions mirror the CPU math surface, so shader code reads like CPU code:
   may be scalar literals or any GPU value with a `LerpBy[_, FloatExpr]`
   instance, which is every `Vec*Expr` width and `FloatExpr` itself:
   `t.lerpIn(vec3(0), tint)`. A CPU `Vec*` bound is lifted at the call site —
-  `t.lerpIn(vec3(SkyTint), vec3(1))`.
-  **`lerpIn` deliberately has no CPU-vector overloads**, and that is worth
-  understanding rather than working around: `Double` converts to `FloatExpr`,
-  so a `FloatExpr` overload taking CPU `Vec3` bounds is also applicable to a
-  CPU call — `0.5.lerpIn(Vec3(0), Vec3(1))` would then quietly resolve into the
-  GPU set and hand back a `Vec3Expr` instead of a `Vec3`. Keeping each
-  receiver's bounds in its own domain is what stops CPU math from turning into
-  shader expressions behind your back.
+  `t.lerpIn(vec3(SkyTint), vec3(1))`. **`lerpIn` deliberately has no CPU-vector
+  overloads**, and that is worth understanding rather than working around:
+  `Double` converts to `FloatExpr`, so a `FloatExpr` overload taking CPU `Vec3`
+  bounds is also applicable to a CPU call — `0.5.lerpIn(Vec3(0), Vec3(1))` would
+  then quietly resolve into the GPU set and hand back a `Vec3Expr` instead of a
+  `Vec3`. Keeping each receiver's bounds in its own domain is what stops CPU
+  math from turning into shader expressions behind your back.
 - **comparisons** → `BoolExpr`: `<  <=  >  >=  ===  !==`, combine with
   `&& || !`.
 - **matrices**: `Mat*Expr` `*` (matrix or vector), `.determinant`.
@@ -270,8 +268,8 @@ VarUInt("n")    := 3      // var n = 3u;         — u32
 LetFloat("t")   := 0.5    // let t = 0.5;
 ```
 
-This is the one place the float default does not apply, because a declaration
-is what *fixes* a local's type: an f32 literal in an `IntExpr`-typed slot would
+This is the one place the float default does not apply, because a declaration is
+what _fixes_ a local's type: an f32 literal in an `IntExpr`-typed slot would
 make the Scala type and the emitted WGSL disagree for the rest of the shader,
 and every later use would still type-check.
 
@@ -285,7 +283,10 @@ control flow.
 
 A CPU-side `Vec2–4` / `Mat2–4` can be used directly in a shader body — it lowers
 to a WGSL **literal** baked in at shader-build time (no uniform, no binding).
-This is how a constant gets authored once and used on both sides:
+This is how a constant gets authored once and used on both sides. Anything
+constant in a shader can be precomputed this way, with the full CPU math and
+helper libraries (`Vec3(0.08, 0.6, 0.9).hsv2rgb`,
+`Mat4.fromTranslation(offset)`), and only the result reaches the WGSL:
 
 ```scala
 val CeilTint = Vec3(0.86, 0.86, 0.85)      // CPU value, also usable CPU-side
@@ -495,6 +496,36 @@ A bare `Int` as a **receiver** (`64.loop`, `64.unroll`, `4.i`) is a count, not
 shader math — the conversion that makes a literal `f32(n)` applies to operands
 only.
 
+## Composing shaders with Scala functions
+
+Shader expressions are ordinary Scala values, so a plain `def` that takes and
+returns them is already a reusable shader building block: no WGSL function, no
+registration. Building and transforming the shader AST is plain Scala code:
+
+```scala
+def vignette(uv: Vec2Expr, strength: Double): FloatExpr =
+  1.0 - (uv - 0.5).length * strength
+
+def grade(col: Vec3Expr, warm: Boolean): Vec3Expr =
+  if warm then col * vec3(1.05, 1.0, 0.92)   // Scala `if`: decided at build time
+  else col
+
+program.frag: ctx =>
+  ctx.out.color := vec4(grade(ctx.in.color, warm = true) * vignette(ctx.in.uv, 0.8), 1.0)
+```
+
+The Scala parameters, `if`s and loops run once, when the shader is built; only
+the resulting expression lands in the WGSL. A helper that emits statements works
+the same way by returning a `Block` (see _Blocks nest_), and `unroll` is the
+loop form of the same idea.
+
+The expression is **inlined at every use**, arguments included: an argument used
+twice in the body is emitted twice. Bind an expensive argument to a `Let` local
+first, or reach for a `WgslFn` (next section), which emits one WGSL function and
+calls it. Rule of thumb: Scala functions for small expressions and for
+build-time specialization (a different shader per argument), `WgslFn` for larger
+bodies called in many places.
+
 ## Helper functions (WgslFn)
 
 Reusable WGSL functions. Calling one in a `program.vert`/`frag` body (or in
@@ -537,13 +568,24 @@ Reusable kernels live in `trivalibs.graphics.shader.lib.*` (`noise`, `color`,
 
 - **extensions** (from the painter prelude) — the everyday form, the same call
   on a CPU vector and a shader expression: `uv.simplexFbm(octaves = 5)`,
-  `p.extendedNoise(tilingPeriod = vec3(8.0, 0.0, 8.0))`, `c.hsv2rgb`,
-  `v.hash`;
+  `p.extendedNoise(tilingPeriod = vec3(8.0, 0.0, 8.0))`, `c.hsv2rgb`, `v.hash`;
 - **object API** — `Simplex.fbm2d(pos, gain = 0.8, seed = 3.0)`: wrapper defs
   with named, defaulted parameters that pick the matching WGSL variant;
 - **`X.wgsl`** — the raw `WgslFn` values, one per code path. This is what a
   raw-WGSL helper passes to `withDeps` (`myFn.withDeps(Simplex.wgsl.fbm2d)`);
   passing a wrapper def there does not compile.
+
+The CPU side (`trivalibs.graphics.lib.*`) mirrors these libraries with the same
+object, member and parameter names, so the extension form is one call for both
+domains. The receiver type picks the side at compile time:
+
+```scala
+val bg: Vec3    = Vec3(hue, 0.8, 0.5).hsv2rgb // CPU: inlined scalar kernel
+val c: Vec3Expr = vec3(hue, 0.8, 0.5).hsv2rgb // GPU: emits color_hsv2rgb(…)
+```
+
+`Hash`, `Blur` and `LineCross` are GPU-only; CPU randomness is
+`trivalibs.utils.random`.
 
 ## Raw WGSL bodies
 

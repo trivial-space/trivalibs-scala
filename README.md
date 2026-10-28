@@ -3,38 +3,86 @@
 A collection of libraries for **interactive graphics on the web**, written in
 Scala.js.
 
-> **Beta** — the API is converging toward stabilization. The two halves of the
-> library, the **Painter** (GPU rendering) and the **Preact bindings**
-> (interactive DOM), are now roughly aligned and being polished together.
+> **Beta** — the Painter API is converging toward stabilization.
 
 ## Goal
 
-One coherent, type-safe toolkit for building interactive graphics web apps in
-Scala.js: write your GPU rendering and your UI in the same language, with the
-same value types flowing between them. The long-term vision is a unified CPU/GPU
-programming model — Scala types and math working identically on both sides,
-replacing WGSL strings with a Scala shader DSL — wrapped in a reactive DOM layer
-so the rendered canvas and the UI around it are one app, not two.
+Expressive, type-safe **WebGPU** graphics, with as little boilerplate as
+possible between an idea and the image. trivalibs gets there with:
 
-## Philosophy
+- **One language for CPU and GPU.** Shaders are written in a Scala DSL, next to
+  the code that drives them, and composed with ordinary Scala functions. Math
+  types, values and helper libraries (noise, color, coordinates) work the same
+  on both sides.
+- **Typed GPU resources.** Shader inputs and bindings are declared as Scala
+  types; WGSL structs and WebGPU layouts are derived from them at compile time.
+- **One concept for every image.** The Panel unifies render targets, drawn
+  scenes, post-processing and static textures (see below).
+- **Embeddable.** The Painter renders into a browser canvas, into plain pixel
+  data in a headless script, or on a GPU device the host already owns. The app
+  around it stays with the host.
+- **Lean output.** Everything compiles to small, direct JavaScript.
 
-This is a deliberately **imperative** library. It targets JavaScript APIs
-directly and avoids functional-programming patterns and the Scala standard
-library to keep runtime overhead and bundle size minimal. Data structures are JS
-objects, arrays, TypedArrays and `js.UndefOr`; async is plain Promises.
+## The Painter
 
-Scala 3 earns its place through metaprogramming and contextual abstraction: we
-use it to build tailored, type-safe DSLs on top of the raw JS interop, so user
-code reads like ordinary Scala while compiling down to lean native JS.
+The Painter is a thin layer over WebGPU that replaces its many low-level objects
+with a handful of entities that each describe one part of an image: what to
+draw, how to shade it, and how passes build on each other. You declare these
+pieces and how they connect; the painter turns them into GPU pipelines, buffers,
+bind groups and render passes. Rendering stays explicit: you decide when each
+image is painted and which one is shown.
 
-## The two halves
+### Vocabulary
 
-### Painter — typed GPU rendering
+The names follow a painting metaphor: a painter paints panels, and shapes are
+formed and shaded. Six entities cover the whole rendering model:
 
-The Painter wraps WebGPU behind a typed API. Vertex attributes, varyings and
-uniforms are described as **named tuples**; the field names and types drive
-compile-time WGSL struct generation and WebGPU layout derivation. Shader bodies
-can be raw WGSL or written in the Scala shader DSL.
+| Entity      | What it is                                                                                                                          | Classic CG term                                       |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **Painter** | Owns the GPU device and the output surface. Factory for every other entity; drives the frame with `paint` and `show`.               | renderer, GPU context + swap chain                    |
+| **Form**    | Geometry: vertex buffers, optional index buffers, topology.                                                                         | mesh, vertex/index buffer                             |
+| **Shade**   | A compiled shader program plus its typed schema (attributes, varyings, uniforms).                                                   | shader program, pipeline, material template           |
+| **Shape**   | A Form drawn with a Shade, plus its bound uniform and texture values. Optionally instanced.                                         | renderable, draw call, mesh + material                |
+| **Layer**   | A full-screen fragment pass over a panel's current image. Needs no Form.                                                            | post-processing pass, full-screen quad, image effect  |
+| **Panel**   | A rendered image: its textures plus the recipe that fills them. Bindable as a texture anywhere; `show` presents one to the surface. | render target, framebuffer + render pass, and texture |
+
+### The Panel: one concept for a rendered image
+
+The Panel is where trivalibs departs most from other renderers. Elsewhere, a
+render target, a scene of meshes drawn into it, a post-processing chain, and a
+texture loaded from an image file are separate kinds of object with separate
+APIs. Here they are all one Panel: an image, plus every participant that
+contributes to it, stacked in a fixed order:
+
+```
+clear color → source → shapes → layers
+```
+
+1. **Clear color**: the background. Without one, the previous contents are kept.
+2. **Source**: a static image (`PixelImage`, `ImageBitmap`, `<canvas>`, video
+   frame, …), uploaded on `set` and redrawn at the start of every paint.
+3. **Shapes**: drawn geometry, with depth testing and MSAA if enabled.
+4. **Layers**: full-screen passes in order, each reading the previous result.
+
+A panel only declares its contributors, in `painter.panel(…)` or later with
+`panel.set(…)`. Nothing renders until the painter paints it: `painter.paint`
+runs the stack and fills the panel's textures. Painted once, a panel is a
+static, baked image; painted every frame, a live one.
+
+Every step is optional, and the combinations cover the usual cases:
+
+- **source only**: a plain texture, and the one case with no paint. The upload
+  on `set` already is the panel's content.
+- **layers only**: a procedural image or generated texture.
+- **shapes, then layers**: a scene with post-processing.
+- **source, then layers**: image processing that starts from the untouched image
+  on every paint, so passes never compound.
+
+Any panel can be bound as a texture input to any shape or layer. Multi-pass
+rendering (bloom, deferred shading, composition) therefore needs no extra
+concept: it is panels sampling panels, painted in dependency order.
+
+### Example
 
 ```scala
 import trivalibs.graphics.buffers.*
@@ -78,51 +126,59 @@ Painter.init(canvas): painter =>
     painter.show(panel)
 ```
 
-`Form` (geometry) + `Shade` (pipeline) compose into a `Shape`; shapes group into
-a `Panel`; `paint` renders, `show` presents. Bindings are typed by uniform name.
-See `examples/painter_triangle`, `examples/panel_triangle`, `examples/blur`,
-`examples/deferred` for the full range.
+A `Form` and a `Shade` compose into a `Shape`, shapes are drawn into a `Panel`,
+`paint` renders it and `show` presents it. Bindings are typed by uniform name.
+For the panel stack in action, see `examples/panel_triangle`,
+`examples/panel_layer`, `examples/panel_tex`, `examples/texture_source`,
+`examples/source_composition`, `examples/blur`, `examples/mipmaps` and
+`examples/deferred`.
 
-### Preact bindings — reactive interactive DOM
+### Embedding
 
-The Preact bindings provide a type-safe HTML DSL, signal-based reactivity
-(`Var`), and a `component` macro that derives a strongly typed modifier API from
-a `Props` type. This is the layer that wraps and drives the graphics canvases —
-UI controls, overlays, layout — so the interactive surface around the rendered
-output is built with the same language and value types.
+The Painter makes no assumptions about its host. `Painter.init(canvas)` takes a
+canvas element and never looks it up in the DOM. An offscreen painter renders
+into plain JS pixel data (`PixelFrames`, `PixelImage`) that a host script
+encodes to PNG or video. The rule is **Scala describes, the host handles I/O**;
+see the [painter setup guide](docs/guide/painter-setup-guide.md) and
+`examples/headless_triangle`, `examples/headless_sequence`.
 
-```scala
-import trivalibs.preact.html.HtmlTags.*
-import trivalibs.preact.component.*
-import trivalibs.preact.signals.Var
+The same applies to the DOM around the canvas: UI controls, overlays and layout
+are best built in the host app with a JS framework, which drives the compiled
+painter code. `trivalibs.preact` holds experimental type-safe Preact bindings
+(HTML DSL, signals) as one way to keep that layer in Scala. It is not a current
+focus.
 
-trait CounterProps extends Props:
-  val initialCount: Int
+## Why Scala
 
-val Counter = component[CounterProps]: props =>
-  val count = Var(props.initialCount)
-  div(
-    button("onClick" := (() => count(_ + 1)), "increment"),
-    span(s"count: ${count()}"),
-  )
+Why Scala, and not TypeScript, Rust or another language? Its metaprogramming,
+contextual abstraction and elegant language features are what make the shared
+CPU/GPU programming model possible, and Scala is exceptionally good at concise
+DSLs over complex domains like graphics programming. The result is very
+expressive code with a uniquely good signal-to-noise ratio compared to other
+graphics engines, which all need far more boilerplate and context switching
+between languages, files and APIs.
 
-// Usage: Counter("initialCount" := 2) — modifier types are derived from CounterProps
-```
-
-`Var(initial)` creates a reactive variable; `v()` reads, `v(x)` / `v(f)` write.
-Signals automatically pick global vs. component context at runtime.
+**How we use Scala** is deliberately unidiomatic. We skip the functional
+programming patterns and the rich standard library that people usually choose
+Scala for. The library is **imperative** and targets JavaScript APIs directly
+through raw JS interop, to keep runtime overhead and bundle size minimal. Data
+structures are JS objects, arrays, TypedArrays and `js.UndefOr`; async is plain
+Promises. Scala's type system and compile-time features carry the DSLs, and user
+code compiles down to lean native JS.
 
 ## Contents
 
 - **graphics/** — the GPU rendering stack
   - `math/` — Vec2–4, Mat2–4 (mutable / immutable / buffer representations)
+  - `lib/` — CPU-side helpers (noise, color, coords) mirroring `shader/lib/`
   - `shader/` — `ShaderDef`, WGSL generation, the Scala shader DSL,
     `shader/lib/` function libraries (noise, color, blur, hashing, coords)
   - `buffers/` — `BufferBinding`, typed vertex attributes
   - `geometry/` — mesh, plane, grid, polygon, shape geometry
   - `scene/` — transform, camera, scene graph
   - `painter/` — the Painter abstraction + the painter-internal WebGPU facades
-- **preact/** — type-safe Preact bindings: HTML DSL, signals, `component` macro
+- **preact/** — experimental type-safe Preact bindings: HTML DSL, signals,
+  `component` macro
 - **utils/** — `bufferdata.scala` (zero-cost typed binary buffers),
   `numbers.scala` (numeric extensions), `js.scala` (JS interop helpers),
   `animate.scala` (`requestAnimationFrame` lifecycle)
@@ -199,7 +255,10 @@ feature-planning docs (for _extending_ it) live under `documents/`.
 - **Guides** — [`docs/guide/`](docs/guide/): the
   [sketch authoring guide](docs/guide/sketch-authoring-guide.md) (end-to-end
   flow + render model), the [shader DSL guide](docs/guide/shader-dsl-guide.md)
-  (schemas, ctx, ops, `WgslFn`), and [gotchas](docs/guide/gotchas.md).
+  (schemas, ctx, ops, `WgslFn`), the
+  [painter setup guide](docs/guide/painter-setup-guide.md) (offscreen and
+  headless rendering, readback, adapter selection), and
+  [gotchas](docs/guide/gotchas.md).
 - **API reference** — `bun run docs` generates the full Scaladoc site to
   `docs/api/html/` (gitignored; published by CI to
   [GitHub Pages](https://trivial-space.github.io/trivalibs-scala/)). Public
@@ -250,14 +309,14 @@ a Rust WGPU painter.
 
 This Scala library is the culmination of that work. It brings the
 live-reloadable workflow and highly expressive graphics exploration together in
-one typed language, from GPU shaders to the UI around the canvas. The research
-into virtual art spaces continues here, in the same philosophy as when trivial
-space started. Current work is live at
+one typed language, from the CPU math to the GPU shaders. The research into
+virtual art spaces continues here, in the same philosophy as when trivial space
+started. Current work is live at
 [sketches.trivialspace.net](https://sketches.trivialspace.net).
 
-Its direct predecessor, [trivalibs-rs](https://github.com/trivial-space/trivalibs-rs),
-remains an alternative for native targets, but is currently not actively
-developed.
+Its direct predecessor,
+[trivalibs-rs](https://github.com/trivial-space/trivalibs-rs), remains an
+alternative for native targets, but is currently not actively developed.
 
 ## License
 
