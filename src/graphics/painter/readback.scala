@@ -3,13 +3,24 @@ package trivalibs.graphics.painter
 import trivalibs.utils.js.*
 
 import scala.scalajs.js
+import scala.scalajs.js.annotation.JSExport
 
 /** GPU → JS readback into [[PixelTarget]]s. Owns the staging buffers: pooled
   * per size for reads that repeat every frame, or destroyed after a one-off
   * read. Every read is eager: it submits right away and lands in its target
   * once `mapAsync` resolves.
   */
-private[painter] final class Readback(device: GPUDevice):
+private[painter] final class Readback(
+    device: GPUDevice,
+    /** The painter's `GPU`, held for as long as reads are in flight. A script
+      * that drops the painter after its last `show` and only awaits
+      * `awaitReadback` keeps nothing else alive, and node-webgpu crashes or
+      * hangs once the `GPU` is collected before `mapAsync` resolves. Pending
+      * reads reach this object, so they reach the `GPU`. Exported because the
+      * linker drops fields that are never read.
+      */
+    @JSExport val gpu: Opt[GPU],
+):
   private val stagingPool = Dict[Arr[GPUBuffer]]()
   private val pending = Arr[js.Promise[Unit]]()
   private var submitted = 0

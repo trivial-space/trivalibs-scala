@@ -244,9 +244,24 @@ val noise = p.panel(source = PixelImage(256, 256, halfFloats))  // rgba16float
   `format`: a `PixelImage`'s own format, otherwise `rgba8unorm`. With
   `followSurface = true` the panel tracks the canvas size instead, and the image
   is stretched over it.
-- **A source alone needs no `paint`.** At its own size and format, with no
-  shapes or layers, the image is the panel's content right after `set`. That is
-  the opposite of a rendered static texture (2c).
+- **A source alone needs no `paint`.** With no shapes, layers, `sourceBlend` or
+  `followSurface`, `set` is all it takes, at any `width` / `height` and
+  `format`: the image is the panel's content, mips included, as soon as `set`
+  returns, ready to bind into other panels. `paint` on such a panel does
+  nothing. That is the opposite of a rendered static texture (2c). Any one of
+  those options makes it a painted panel instead: like any rendered panel it
+  stays blank until painted. A `followSurface` panel tracks the canvas, so paint
+  it in `onResize`.
+- **Shrinking a large image: give it its own panel.** A source drawn into a
+  smaller panel is sampled at full resolution only, so it aliases below half its
+  size. Load it into a source-only panel at its own size with `mips = true`, and
+  sample that with `p.samplerLinear` (trilinear), which picks the matching mip:
+
+  ```scala
+  val photo = p.panel(source = bitmap, mips = true)   // no paint needed
+  thumbShape.bind("tex" := photo, "samp" := p.samplerLinear)
+  ```
+
 - **Shapes and layers paint over it**, in this order: clear color, source,
   shapes, layers. The source is redrawn at the start of every paint, so pong
   layers process the untouched image and never compound. With `depthTest`,

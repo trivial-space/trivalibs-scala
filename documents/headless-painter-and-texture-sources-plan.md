@@ -1132,6 +1132,15 @@ by coincidence. A `followSurface` panel always takes the drawn path.
   source on every paint, so pong layers process the image fresh and never
   compound.
 
+  _As built:_ a **source-only** drawn panel — a size or format that differs, but
+  no shapes, layers, `sourceBlend` or `followSurface` — is drawn by `set`
+  instead of by paint, which skips it like a direct one. Its content depends on
+  the source alone, so the "a source alone needs no paint" rule covers every
+  fixed-size case. `set` reuses the painter's `renderPanel`, the body of paint
+  after `ensureSize`. `followSurface` stays painted: redrawing on resize would
+  need the painter to track panels, and the flag already says the panel follows
+  the paint loop.
+
   _As built:_ the planned "layered direct path" — a `copyTextureToTexture` into
   slot 0 instead of the draw when only layers are added — is dropped. At equal
   size the draw samples texel centers and is exact too, so the copy would only

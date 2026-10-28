@@ -35,8 +35,8 @@ def main(): Unit =
         val on = (x / 4 + y / 4 + shift) % 2 == 0
         data(i) = (if on then 240 else 30 + x * 12).toShort
         data(i + 1) = (if on then 180 else 40 + y * 12).toShort
-        data(i + 2) = (if on then 60 else 160).toShort
-        data(i + 3) = 255.toShort
+        data(i + 2) = (if on then 60 else 160)
+        data(i + 3) = 255
 
     val drawing =
       document.createElement("canvas").asInstanceOf[HTMLCanvasElement]
@@ -110,7 +110,11 @@ def main(): Unit =
       )
     val right = p
       .shape(quad(), shade)
-      .bind("mvp" := rightMvp, "texSampler" := mipSampler, "tex" := drawingPanel)
+      .bind(
+        "mvp" := rightMvp,
+        "texSampler" := mipSampler,
+        "tex" := drawingPanel,
+      )
 
     val scene = p.panel(
       clearColor = (0.05, 0.05, 0.09, 1.0),

@@ -381,17 +381,23 @@ class HeadlessPainterTest extends FunSuite:
       p.show(panel)
       p.awaitReadback().toFuture.map(_ => assertEquals(pixels(out), inverted(src)))
 
-  test("a source scales to an explicit size"):
+  test("a source scales to an explicit size, without painting"):
     val out = PixelImage(6, 4)
     painterOn(out).flatMap: p =>
-      p.paintAndShow(
-        p.panel(source = solid(2, 2, 10, 120, 240, 255), width = 6, height = 4),
-      )
-      p.awaitReadback().toFuture.map: _ =>
+      val panel =
+        p.panel(source = solid(2, 2, 10, 120, 240, 255), width = 6, height = 4)
+      val first = p.showTo(panel, PixelImage(6, 4))
+      panel.set(source = solid(2, 2, 1, 2, 3, 255))
+      val second = p.showTo(panel, PixelImage(6, 4))
+      for
+        f <- first.toFuture
+        s <- second.toFuture
+      yield
         assertEquals(
-          pixels(out),
+          pixels(f),
           Seq.fill(6 * 4)(Seq(10.0, 120.0, 240.0, 255.0)).flatten,
         )
+        assertEquals(pixels(s), Seq.fill(6 * 4)(Seq(1.0, 2.0, 3.0, 255.0)).flatten)
 
   test("sourceBlend blends the source over the clear color"):
     val out = PixelImage(2, 2)

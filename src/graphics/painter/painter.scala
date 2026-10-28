@@ -268,7 +268,7 @@ class Painter private[painter] (
     else readback.get.awaitAll()
 
   private[painter] def ensureReadback(): Readback =
-    if readback.isNull then readback = Readback(device)
+    if readback.isNull then readback = Readback(device, gpu)
     readback.get
 
   private def createCaptureTexture(
@@ -1233,8 +1233,15 @@ class Painter private[painter] (
 
   private def paintPanel(panel: Panel): Unit =
     panel.ensureSize(width.toInt, height.toInt)
-    // The source's pixels already are the whole content, uploaded by `set`.
-    if panel.directSource then return
+    // Its content was produced by `set`.
+    if panel.sourceOnly then return
+    renderPanel(panel)
+
+  /** Renders `panel` at its current allocation: clear, source, shapes, layers,
+    * mips. `paint` calls it, and `Panel.set` for a source-only panel on the
+    * drawn path.
+    */
+  private[painter] def renderPanel(panel: Panel): Unit =
     val msaa = panel.multisample
 
     // Step 1: render shapes into main texture(s)
@@ -1991,7 +1998,7 @@ class Painter private[painter] (
         Obj.literal(
           layout = blitBindGroupLayout,
           entries = Arr(
-            Obj.literal(binding = 0, resource = panel.sourceViews.get.sampling),
+            Obj.literal(binding = 0, resource = panel.sourceView.get),
             Obj.literal(binding = 1, resource = samplerLinear),
           ),
         ),

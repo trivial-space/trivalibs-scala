@@ -435,11 +435,12 @@ Verified on Node 24.16 and Bun 1.4.2 with node-webgpu 0.6.2:
   driver errors, across repeated runs.
 - **The `GPU` must stay alive while the device is in use.** Dawn's device does
   not keep its instance alive; once the `GPU` object is garbage-collected,
-  node-webgpu aborts the process (`futex`, `pthread_mutex_lock` or
-  `std::system_error` crashes). A painter from `init(target, gpu, …)` or
-  `init(canvas)` holds the `GPU` and its adapter (`p.gpu`, `p.adapter`), so
-  `render(create([]), out)` is safe while the painter is in use. After
-  `init(target, device)` the caller has to keep the `GPU` referenced.
+  node-webgpu aborts or hangs the process (`futex`, `pthread_mutex_lock`,
+  segfault or `std::system_error`). A painter from `init(target, gpu, …)` or
+  `init(canvas)` holds the `GPU` and its adapter (`p.gpu`, `p.adapter`), and its
+  in-flight readbacks hold the `GPU` too, so `render(create([]), out)` is safe
+  until `awaitReadback` resolves, even once the painter itself is unreachable.
+  After `init(target, device)` the caller has to keep the `GPU` referenced.
 
 There is no `destroy()` yet. GPU memory is reclaimed at process end, which is
 all render-and-exit scripts need; explicit freeing for long-running hosts is

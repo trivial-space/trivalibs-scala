@@ -4,15 +4,16 @@
 
 export function downloadPng(image, filename) {
 	const { width, height, data } = image
-	const canvas = document.createElement('canvas')
-	canvas.width = width
-	canvas.height = height
+
 	const pixels = new Uint8ClampedArray(
 		data.buffer,
 		data.byteOffset,
 		data.length,
 	)
 
+	const canvas = document.createElement('canvas')
+	canvas.width = width
+	canvas.height = height
 	canvas
 		.getContext('2d')
 		.putImageData(new ImageData(pixels, width, height), 0, 0)

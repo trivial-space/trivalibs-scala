@@ -143,9 +143,9 @@ class Panel private[painter] (val painter: Painter):
     TextureFormat.Rgba8Unorm
   private var sourceInSlot0: Boolean = false
   private var sourceTexture: Opt[GPUTexture] = null
-  private[painter] var sourceViews: Opt[TextureViewBundle] = null
+  private[painter] var sourceView: Opt[GPUTextureView] = null
   // The source draw's bind group, built by the painter on first use; reset
-  // whenever `sourceViews` changes.
+  // whenever `sourceView` changes.
   private[painter] var sourceGroup: Opt[GPUBindGroup] = null
 
   private[painter] def panelWidth: Int = allocatedWidth
@@ -167,14 +167,19 @@ class Panel private[painter] (val painter: Painter):
     else if hasSource then Arr(sourceDefaultFormat)
     else Arr(painter.preferredFormat)
 
-  /** Direct path: the source's pixels are the panel's whole content, so they
-    * live in slot 0 and painting renders nothing. Anything drawn or composed
-    * over them, a size of the surface's or the source's own, or a format that
-    * differs takes the drawn path instead.
+  /** The content depends on the source alone: nothing drawn or composed over
+    * it, no surface tracking. `set` produces it and `paint` skips the panel.
+    */
+  private[painter] def sourceOnly: Boolean =
+    hasSource && shapes.length == 0 && layers.length == 0 &&
+      sourceBlend.isNull && !followSurface
+
+  /** Direct path: a source-only panel at the source's own size and format. The
+    * pixels live in slot 0 and nothing is rendered. Any other size or format,
+    * or anything that is not source-only, takes the drawn path instead.
     */
   private[painter] def directSource: Boolean =
-    hasSource && shapes.length == 0 && layers.length == 0 &&
-      sourceBlend.isNull && !followSurface &&
+    sourceOnly &&
       (specWidth == 0 || specWidth == sourceWidth) &&
       (specHeight == 0 || specHeight == sourceHeight) &&
       formats.length <= 1 &&
@@ -287,13 +292,14 @@ class Panel private[painter] (val painter: Painter):
     * are sugar and the plural forms take precedence.
     *
     * A change of format, MSAA, depth, mips or pong need reallocates the
-    * textures on the next paint (or right away on a direct-path source panel),
-    * which drops their pixels. Clear color, shapes and non-pong layers keep
-    * them.
+    * textures on the next paint (or right away on a source-only panel), which
+    * drops their pixels. Clear color, shapes and non-pong layers keep them.
     *
     * `source = …` uploads right away, and is the only upload: set it again
-    * after changing the image's pixels. `source = null` removes it; the pixels
-    * already in the panel stay, and so does the panel's format.
+    * after changing the image's pixels. A source-only panel (no shapes, layers,
+    * `sourceBlend` or `followSurface`) is complete after `set` and needs no
+    * paint. `source = null` removes it; the pixels already in the panel stay,
+    * and so does the panel's format.
     */
   def set[S <: AnyShape, L <: AnyLayer](
       width: Maybe[Int] = Maybe.Not,
@@ -365,9 +371,11 @@ class Panel private[painter] (val painter: Painter):
     source.foreach: v =>
       if v.isNull then releaseSource()
       else uploadSource(v.get)
-    // The direct path's size comes from the source, so it can apply
-    // allocation changes now instead of on a paint that may never come.
-    if directSource then ensureSize(0, 0)
+    // A source-only panel's size doesn't depend on the surface, so its content
+    // is complete here instead of on a paint that may never come.
+    if sourceOnly then
+      ensureSize(0, 0)
+      if !directSource then painter.renderPanel(this)
     this
 
   private inline def processPanelEntry[N <: String & Singleton, V](
@@ -808,7 +816,7 @@ class Panel private[painter] (val painter: Painter):
           ),
         )
         sourceTexture = tex
-        sourceViews = buildViews(tex, 1)
+        sourceView = tex.createView()
       TextureSource.upload(
         painter.queue,
         source,
@@ -827,7 +835,7 @@ class Panel private[painter] (val painter: Painter):
   private def releaseSourceTexture(): Unit =
     if sourceTexture.notNull then sourceTexture.get.destroy()
     sourceTexture = null
-    sourceViews = null
+    sourceView = null
     sourceGroup = null
 
   // Slot 0 holds the source's pixels but is about to be reallocated, or the
@@ -836,7 +844,7 @@ class Panel private[painter] (val painter: Painter):
   private def adoptSlot0AsSource(): Unit =
     releaseSourceTexture()
     sourceTexture = textures.shift()
-    sourceViews = views.shift()
+    sourceView = views.shift().attach
     sourceInSlot0 = false
     needsRealloc = true
 

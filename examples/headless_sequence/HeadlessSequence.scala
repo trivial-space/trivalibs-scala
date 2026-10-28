@@ -53,14 +53,14 @@ def render(
         )
 
       painter.onResize: (w, h) =>
-        res.set(Vec2(w, h))
+        res := Vec2(w, h)
 
       val tpf = 1000.0 / fps
       val loopMs = frameCount * tpf
       var time = 0.0
 
       for _ <- 0 until frameCount do
-        phase.set(time / loopMs * Tau)
+        phase := time / loopMs * Tau
         painter.paint(panel)
         painter.show(panel)
         time += tpf

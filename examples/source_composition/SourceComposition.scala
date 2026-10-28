@@ -10,10 +10,11 @@ import trivalibs.prelude.painter.{*, given}
 
 import scala.scalajs.js.annotation.*
 
+val ImageSize = 512
+
 /** A panel source composed with the rest of a panel. Click to cycle:
-  *   - background: the image stretched over the canvas (`followSurface`),
-  *     under two depth-tested, multisampled triangles that cut through each
-  *     other;
+  *   - background: the image stretched over the canvas (`followSurface`), under
+  *     two depth-tested, multisampled triangles that cut through each other;
   *   - effects: the image at its own size through a blur and a color grade
   *     layer stack, re-run on the untouched image every paint;
   *   - blend: a translucent image blended (`sourceBlend`) over an animated
@@ -30,20 +31,21 @@ def main(): Unit =
 
     def drawing(translucent: Boolean): HTMLCanvasElement =
       val c = document.createElement("canvas").asInstanceOf[HTMLCanvasElement]
-      c.width = 512
-      c.height = 512
+      c.width = ImageSize
+      c.height = ImageSize
+      val center = ImageSize / 2.0
       val ctx = c.getContext("2d").asInstanceOf[CanvasRenderingContext2D]
       if !translucent then
         ctx.fillStyle = "#1d3557"
-        ctx.fillRect(0, 0, 512, 512)
+        ctx.fillRect(0, 0, ImageSize, ImageSize)
       for i <- 0 until 12 do
         ctx.fillStyle =
           if translucent then s"hsla(${i * 30}, 80%, 60%, 0.5)"
           else s"hsl(${i * 30}, 70%, 55%)"
         ctx.beginPath()
         ctx.arc(
-          256 + 150 * math.cos(i * math.Pi / 6),
-          256 + 150 * math.sin(i * math.Pi / 6),
+          center + 150 * math.cos(i * math.Pi / 6),
+          center + 150 * math.sin(i * math.Pi / 6),
           70,
           0,
           2 * math.Pi,
@@ -52,7 +54,7 @@ def main(): Unit =
       ctx.fillStyle = "#f1faee"
       ctx.font = "bold 64px system-ui, sans-serif"
       ctx.textAlign = "center"
-      ctx.fillText("source", 256, 278)
+      ctx.fillText("source", center, center + 22)
       c
 
     val image = drawing(translucent = false)
@@ -123,7 +125,7 @@ def main(): Unit =
         )
 
     val time = p.binding(0.0)
-    val resolution = Vec2(512.0, 512.0)
+    val resolution = Vec2(ImageSize, ImageSize)
     def blur(dir: Vec2) =
       p.layer(blurShade)
         .bind(
@@ -172,9 +174,12 @@ def main(): Unit =
 
     animate: tpf =>
       t += tpf * 0.001
+
       time := t
+
       mvpA := proj * view * Mat4.fromRotationY(t * 0.7)
       mvpB := proj * view * Mat4.fromRotationY(t * 0.7 + math.Pi / 2)
+
       val hue = t * 0.1 % 1.0
       val rgb = Vec3(hue, 0.6, 0.35).hsv2rgb
       blended.set(clearColor = Vec4(rgb.x, rgb.y, rgb.z, 1.0))
