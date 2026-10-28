@@ -24,10 +24,10 @@ bun run publish:local    # Publish a Scala artifact to ~/.ivy2/local
 `check` deletes the build state before compiling, on purpose. scala-cli's
 incremental cache reports stale results often enough to matter: a green check
 over genuinely broken code, and failures that no longer exist. `check` is the
-correctness gate, so it buys certainty for ~6s; fast iteration is what
-`sketch` / `sketch:watch` in the consuming repo are for. **Any comparative
-measurement — emitted JS, does-this-still-compile — must clear
-`.scala-build` too, or the answer cannot be trusted.**
+correctness gate, so it buys certainty for ~6s; fast iteration is what `sketch`
+/ `sketch:watch` in the consuming repo are for. **Any comparative measurement —
+emitted JS, does-this-still-compile — must clear `.scala-build` too, or the
+answer cannot be trusted.**
 
 Examples are deployed manually (`bun run deploy`), not by CI — unlike the
 consuming sketch repo, building them needs the Scala toolchain, and library
@@ -94,11 +94,11 @@ with minimal low-level overhead.
   (`Vec3Base[Num, Vec]`, `Vec3Mutable`, `Vec3ImmutableOps`). Also
   `interpolation.scala` (the `Lerp` type class, for code generic in the value it
   interpolates).
-- `src/graphics/lib/` — the helper library's CPU side plus the shared
-  CPU/GPU extensions: `color.scala`, `coords.scala`,
+- `src/graphics/lib/` — the helper library's CPU side plus the shared CPU/GPU
+  extensions: `color.scala`, `coords.scala`,
   `noise/{simplex, extended, worley, extensions}.scala`, and `args.scala` (the
-  `FloatArg` / `IntArg` / `VecArg` parameter unions). Mirrors `shader/lib/`
-  path for path — see "Lib helpers: three layers" below.
+  `FloatArg` / `IntArg` / `VecArg` parameter unions). Mirrors `shader/lib/` path
+  for path — see "Lib helpers: three layers" below.
 - `src/graphics/shader/` — `ShaderDef` with 7 type parameters. Named tuple type
   params → compile-time WGSL structs + WebGPU layouts. Key files: `types.scala`
   (WGSLType type class), `derive.scala` (WGSL generation), `layouts.scala`
@@ -119,7 +119,12 @@ with minimal low-level overhead.
   interactive DOM layer that integrates with and drives the graphics layers.
 - `examples/` — one example per feature, each with `index.html` + `main.js` +
   `*.scala`. Compiled JS lands in `examples/out/`. Examples double as
-  idiomatic-usage docs and ship with the library.
+  idiomatic-usage docs and ship with the library. Files an example loads at
+  runtime (images, data) go in its own `assets/` folder, committed and copied
+  into `dist/` by `build-dist.ts`; headless drivers write their output there.
+- `examples/example_helpers/` — JS/TS and Scala utils shared between examples
+  that are not library usage (e.g. `png.ts` for the headless drivers), kept out
+  so each example shows only the library. No `index.html`, so not an example.
 
 ### Critical Type-Level Patterns
 
@@ -213,13 +218,13 @@ Shader-side and CPU-side helpers are judged by different costs:
   branching — **as long as the emitted WGSL is free of it** (only the needed fn
   calls, no dead code).
 - **CPU (`math/`, `graphics/lib/` — the CPU mirrors of shader helpers)**:
-  helpers get called in hot
-  paths and render loops. The linked JS for a call must be the most direct form
-  — ideally one call to a plain scalar kernel. No surviving Scala wrapper frame,
-  typeclass / given dispatch, per-call allocation or runtime option check. Get
-  convenience (defaults, named params, CPU/GPU-shared extension names) from
-  `inline` / `transparent inline` defs with compile-time branching, and verify
-  representative call sites in a `jsMode full` link.
+  helpers get called in hot paths and render loops. The linked JS for a call
+  must be the most direct form — ideally one call to a plain scalar kernel. No
+  surviving Scala wrapper frame, typeclass / given dispatch, per-call allocation
+  or runtime option check. Get convenience (defaults, named params,
+  CPU/GPU-shared extension names) from `inline` / `transparent inline` defs with
+  compile-time branching, and verify representative call sites in a
+  `jsMode full` link.
 
 Note: `Arr(...)` literals are safe in library code too — `Arr.apply` has
 concrete-arity `inline` overloads (0..12) that compile to native `js.Array(...)`
@@ -283,8 +288,8 @@ mode.
   E.g. Rust's `LineGeometryProps` became the default parameters of
   `Line.toBufferedGeometry`. Drop fields the Rust original never reads.
 - **Lib helpers: three layers, mirrored CPU / GPU.** Helper domains (color,
-  coords, noise) exist on both sides with identical object, member and
-  parameter names; the package prefix picks the side
+  coords, noise) exist on both sides with identical object, member and parameter
+  names; the package prefix picks the side
   (`trivalibs.graphics.lib.noise.Simplex` CPU,
   `trivalibs.graphics.shader.lib.noise.Simplex` GPU). Per domain:
 
@@ -300,18 +305,18 @@ mode.
   n := uv.simplexFbm(octaves = 5, seed = 7.0)      // same call on a Vec2
   ```
 
-  Why one extension def for both sides: Scala forbids default arguments on
-  more than one overloaded alternative, so same-named extensions for `Vec2`
-  and `Vec2Expr` (or CPU and GPU exported into one prelude) cannot both carry
+  Why one extension def for both sides: Scala forbids default arguments on more
+  than one overloaded alternative, so same-named extensions for `Vec2` and
+  `Vec2Expr` (or CPU and GPU exported into one prelude) cannot both carry
   defaults. Their parameters take `FloatArg` / `IntArg` / `VecArg` unions
   (`graphics/lib/args.scala`), narrowed per side at compile time with explicit
-  conversions (`d.toExpr`, `i.i`). Optional behavior is a parameter
-  defaulting to `null` (`seed`, `tilingPeriod`, `rot`), never a suffixed name.
-  The full convention set (naming, parameter order, ranges, WGSL names) is in
-  `documents/done/cpu-gpu-lib-plan.md` (C1–C14). GPU-only helpers (`Hash`, `Blur`,
-  `LineCross`) have the `wgsl` layer and wrappers but no CPU side; `Hash` has
-  GPU-only extensions (`x.hash`, `u.hashU`, `u.hash1`), and CPU randomness is
-  `utils/random`.
+  conversions (`d.toExpr`, `i.i`). Optional behavior is a parameter defaulting
+  to `null` (`seed`, `tilingPeriod`, `rot`), never a suffixed name. The full
+  convention set (naming, parameter order, ranges, WGSL names) is in
+  `documents/done/cpu-gpu-lib-plan.md` (C1–C14). GPU-only helpers (`Hash`,
+  `Blur`, `LineCross`) have the `wgsl` layer and wrappers but no CPU side;
+  `Hash` has GPU-only extensions (`x.hash`, `u.hashU`, `u.hash1`), and CPU
+  randomness is `utils/random`.
 
 - **Shader DSL: no type-ascription casts in user-facing code.** Write shader
   expressions naturally — `0.5`, `(1.0 - uv.y)`, `band * vec3(...)`,
@@ -355,6 +360,20 @@ mode.
   line — no collapsing pairs of statements onto a single line.
 - when working with typeclasses, use [T: Typeclass] notation instead of
   [T](using Typeclass[T]) where possible
+- **Class body layout.** All eager fields (`val` / `var`) first — public, then
+  private, unless an initializer depends on a later one. Then the
+  constructor-time statements, then defs — public, then private. Scala runs the
+  body top to bottom, so a statement above a field runs before that field's
+  initializer, which can then overwrite what the statement set. Fields first
+  rules that out; `lazy val`s may sit with the defs that use them. Constructor
+  statements only set up the object's own state (e.g. validating arguments).
+  Anything that hands out `this` — passing it to another object, registering
+  callbacks — goes in a `private[pkg]` setup def that the factory calls right
+  after `new` (`Painter.initializeSurface()`), so `this` never escapes
+  half-built. A large class (`Painter`) keeps its fields at the top, then groups
+  the defs into content sections under `// ====` headers (device and surface,
+  size, readback, factories, rendering, …), each public-first; sections of only
+  private helpers come last.
 - When doing floating point math, prefer trivalibs NumExt extensions instead of
   math library methods if possible. I.e. `x.sin` instead of `math.sin(x)`,
   `x.sqrt` instead of `math.sqrt(x)`, etc.

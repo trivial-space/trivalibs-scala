@@ -2,34 +2,49 @@
 
 ## Panel / Textures
 
-### 🔄 `with_static_texture_data(bytes)` on Panel
+### 🔄 MRT: a generative layer as an alternative to shapes
 
-> Now planned as Milestone 2 of
-> [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md)
-> (`Pixels` / `TextureSource` panel sources). Remove this entry when M2.0 lands.
+**Goal:** an MRT panel (several `formats`) can be filled by **one generative
+layer** instead of shapes. A layer has a fragment shader with no geometry and no
+vertex shader of its own, which is the natural fit for an SDF render or a
+raymarcher that writes color, normal and position to separate targets. It must
+work alongside the current shape rendering on MRT panels, and must not replace
+it.
 
-**Gap:** Rust's `Panel::with_static_texture_data(bytes)` is the canonical way to
-load an image / baked texture into a panel's render target. The Scala Panel has
-no direct equivalent — callers must build a `GPUTexture` with usage
-`COPY_DST | TEXTURE_BINDING` via the raw device and bind it by hand.
+**Rule:** an MRT panel has **either shapes or exactly one generative layer**.
+The layer writes every target in a single pass that does not ping-pong. Nothing
+else is supported: no layer stacks, no blending of several layers, no shapes
+combined with layers, no layer reading the panel's previous output (ping-pong is
+forbidden already), and no static source (forbidden by the texture-sources plan,
+§4.2). Inputs come in as explicitly bound panels.
+
+**Current bug (code reading, unverified at runtime):** a non-ping-pong layer on
+an MRT panel fails today. The shared layer pass in `paintPanel`
+(`painter.scala`) attaches only slot 0, but `renderLayerOnPass` builds the
+pipeline with all of `panel.effectiveFormats`. WebGPU requires a pipeline's
+targets to match the pass's color attachments, so `setPipeline` fails
+validation. The mip-target layer pass has the same mismatch.
 
 **Required changes:**
 
-- Add a `staticTextureData` param (or a dedicated
-  `setStaticTextureData(bytes, format, width, height)` method) on `Panel` /
-  `painter.panel(...)`.
-- Internally: create the `GPUTexture` with `COPY_DST | TEXTURE_BINDING`, call
-  `queue.writeTexture`, and wire the texture view as the panel's output so
-  downstream `Layer`s sampling the panel see the baked pixels.
-- Default format / dimensions from `bytes` or require explicit args — match
-  Rust's signature.
+- In `Panel.set` (the validation choke point): on an MRT panel, throw for shapes
+  plus layers, for more than one layer, and for a layer with `mipTarget`.
+- In `paintPanel`: when an MRT panel has its one layer, render it in a pass that
+  attaches **all** targets, with the same clear or load and MSAA handling as the
+  shape pass. Either reuse the shape-pass attachment setup or factor it out.
+- Layer shades on MRT must declare one fragment output per target. Check that
+  the shader DSL can express multiple outputs in a `layerShade`, as it already
+  does for shapes.
+- An example: an SDF scene rendered by a single MRT layer into a G-buffer, then
+  lit by a single-format panel, the counterpart of `examples/deferred` without
+  geometry.
 
-**Doc follow-up:** Once added, remove the gap bullet from
-[scala-port-comparison.md §12](rust-painter/scala-port-comparison.md) and add
-the param row to the Panel table in §3.
+**Doc follow-up:** `docs/guide/gotchas.md` (MRT paragraph, "A layer that
+manually binds its first slot is _not_ auto-pong and is fine on an MRT panel")
+is untested and, by the bug above, wrong. Rewrite it to the rule above.
 
-**Priority:** Medium — unblocks any example that needs a baked image texture
-(image-based sketches, reference LUTs, etc.).
+**Priority:** Medium. Until then, the working MRT pattern is shapes writing the
+G-buffer, read by a separate single-format panel.
 
 ---
 
@@ -57,7 +72,7 @@ Add a public `destroy(): Unit` to the painter classes that own GPU resources:
   reuse the existing texture-teardown logic (`panel.scala:133-134, 450-458`).
 - **`Painter`** — `destroy()` → `device.destroy()`, plus a pending-work drain
   (`queue.onSubmittedWorkDone()`) before it. Deferred out of
-  [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md):
+  [headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md):
   render-and-exit scripts end with `process.exit(0)` and let the OS reclaim
   everything. Needed once a **long-running** process renders repeatedly — e.g. a
   server rendering images on demand, where each request's painter (or its

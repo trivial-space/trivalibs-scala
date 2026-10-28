@@ -33,10 +33,10 @@ def myShape(canvas: HTMLCanvasElement): Unit =
 
 Two pieces of advice, both easy to follow and awkward to retrofit:
 
-- **Let the host call in, rather than running on import.** A
-  `@JSExportTopLevel` function the page invokes gives the host control over
-  _when_ the sketch starts; a `@main` def runs as a side effect of loading the
-  module, which is harder to sequence and to reuse.
+- **Let the host call in, rather than running on import.** A `@JSExportTopLevel`
+  function the page invokes gives the host control over _when_ the sketch
+  starts; a `@main` def runs as a side effect of loading the module, which is
+  harder to sequence and to reuse.
 - **Take the canvas as a parameter.** Looking it up with
   `document.getElementById` ties the bundle to a browser DOM. Passing it in lets
   the same code run under a host that has none — e.g. NativeScript Canvas, where
@@ -47,8 +47,7 @@ the consuming project**, not of this library; a project that runs many sketches
 will want to fix them so its host glue is identical everywhere. This repo's own
 `examples/` use `@JSExportTopLevel("main", moduleID = "<example>")` and look the
 canvas up from `document`, because they are bundled many-to-one and each owns
-its page — a reasonable choice for that setup, and not a general
-recommendation.
+its page — a reasonable choice for that setup, and not a general recommendation.
 
 ### The preludes
 
@@ -75,8 +74,8 @@ Two names differ from the raw imports, deliberately:
 - `Vec2`…`Mat4` come from `graphics.math.cpu`; the `gpu` package re-exports the
   same six names for shader contracts, and exporting both would clash.
 
-Angle constants are **`Pi`** and **`Tau`** (`Tau` = 2π, a full turn) — capitalised,
-from `utils.numbers` via `prelude.core`.
+Angle constants are **`Pi`** and **`Tau`** (`Tau` = 2π, a full turn) —
+capitalised, from `utils.numbers` via `prelude.core`.
 
 ## 2. The core pipeline
 
@@ -135,8 +134,8 @@ val panel = p.panel(shape = shape, clearColor = (0.05, 0.06, 0.1, 1.0), depthTes
   `(position: Vec3, uv: Vec2)`, use `WithNormal[V]` for the attribs schema).
 - **Builders**: `Box` — `.faces` (each as `(quad, normal)`), or per-face
   `.frontFace`/`.topFace`/… with a `(corner, uvw) => vertex` fn for custom
-  per-vertex attributes (UVs etc.); `sphereMesh(vSeg, hSeg)(f)`;
-  `Grid` → `Mesh(grid.ccwQuads)`.
+  per-vertex attributes (UVs etc.); `sphereMesh(vSeg, hSeg)(f)`; `Grid` →
+  `Mesh(grid.ccwQuads)`.
 - Transform meshes with `mesh.map` / `flatMap`. All three builders are in the
   `geometry3d_scene` example (box + sphere + terrain grid).
 
@@ -223,6 +222,59 @@ shape.bind("tex" := panel)
 painted; one that never appears in the per-frame `paint` list and isn't painted
 at construction stays blank, with no error anywhere.
 
+### 2d. An image as a panel's source
+
+A panel can start from an image instead of a render. `source` takes a
+`PixelImage` (raw RGBA in a typed array) or a browser image (`ImageBitmap`,
+`ImageData`, `<img>`, `<canvas>`, `OffscreenCanvas`, `<video>`, `VideoFrame`):
+
+```scala
+WebImages.load("assets/wall.png").map: bitmap =>
+  val wall = p.panel(source = bitmap, mips = true)   // its size, rgba8unorm
+  shape.bind("tex" := wall)
+
+val noise = p.panel(source = PixelImage(256, 256, halfFloats))  // rgba16float
+```
+
+- **Upload only on `set`.** `p.panel(source = …)` and `panel.set(source = …)`
+  upload once. After changing the image (rewritten `data`, a canvas drawn into,
+  the next video frame), call `set(source = …)` again. `paint` never re-reads
+  it.
+- **Size and format come from the source** unless you pass `width` / `height` or
+  `format`: a `PixelImage`'s own format, otherwise `rgba8unorm`. With
+  `followSurface = true` the panel tracks the canvas size instead, and the image
+  is stretched over it.
+- **A source alone needs no `paint`.** With no shapes, layers, `sourceBlend` or
+  `followSurface`, `set` is all it takes, at any `width` / `height` and
+  `format`: the image is the panel's content, mips included, as soon as `set`
+  returns, ready to bind into other panels. `paint` on such a panel does
+  nothing. That is the opposite of a rendered static texture (2c). Any one of
+  those options makes it a painted panel instead: like any rendered panel it
+  stays blank until painted. A `followSurface` panel tracks the canvas, so paint
+  it in `onResize`.
+- **Shrinking a large image: give it its own panel.** A source drawn into a
+  smaller panel is sampled at full resolution only, so it aliases below half its
+  size. Load it into a source-only panel at its own size with `mips = true`, and
+  sample that with `p.samplerLinear` (trilinear), which picks the matching mip:
+
+  ```scala
+  val photo = p.panel(source = bitmap, mips = true)   // no paint needed
+  thumbShape.bind("tex" := photo, "samp" := p.samplerLinear)
+  ```
+
+- **Shapes and layers paint over it**, in this order: clear color, source,
+  shapes, layers. The source is redrawn at the start of every paint, so pong
+  layers process the untouched image and never compound. With `depthTest`,
+  shapes always land on top of it. `sourceBlend = BlendState.Alpha` blends it
+  over the clear color instead of replacing it.
+- `WebImages.load` keeps the pixels bit-exact by default (no color-space
+  conversion, straight alpha), as data textures need; pass `colorManaged = true`
+  for a photo.
+- Not on MRT panels: bind a source panel as a texture of the MRT shapes instead.
+- `set(source = null)` removes the source and keeps the pixels already in the
+  panel. Pin the size in the same call (`width = …, height = …`) if it came from
+  the image.
+
 ## 3. Bindings
 
 `p.binding[T]` (or `p.binding(initialValue)`) makes a uniform buffer; update it
@@ -246,16 +298,16 @@ val tileSampler = p.sampler(
 )
 ```
 
-Without `AddressMode.Repeat` the out-of-range UV clamps into a smear at the
-edge rather than tiling. `bind`
-matches only on the **field name** and a compatible **value type** — it is
-stage-agnostic and never mentions visibility (which is convenient: the same
-`bind` call works regardless of stage).
+Without `AddressMode.Repeat` the out-of-range UV clamps into a smear at the edge
+rather than tiling. `bind` matches only on the **field name** and a compatible
+**value type** — it is stage-agnostic and never mentions visibility (which is
+convenient: the same `bind` call works regardless of stage).
 
 Shader-stage **visibility** is instead declared in the shade's uniform schema
 (the `U` type parameter), by wrapping field types: `VertexUniform[T]` /
 `FragmentUniform[T]` (bare `T` = both stages; in `layerShade` everything is
-fragment, so no wrapper needed). See the [shader DSL guide](shader-dsl-guide.md).
+fragment, so no wrapper needed). See the
+[shader DSL guide](shader-dsl-guide.md).
 
 **Panel textures** are declared as a separate `P` schema of `FragmentPanel`
 markers and read via `ctx.textures.<name>`:
@@ -298,10 +350,10 @@ uniform says how many are live, and the shader loops to `count`:
 loop(1, count.toI32)(i => col := col.mix(stops(i).rgb, …))
 ```
 
-Elements past the ones written read as zero on a fresh binding. One caveat:
-**a later, shorter `set` does not clear the tail** — bind 8 values, then 3, and
-elements 3..7 still hold the old ones. That is exactly what `count` masks off, so
-the pattern is safe as long as the shader honours it.
+Elements past the ones written read as zero on a fresh binding. One caveat: **a
+later, shorter `set` does not clear the tail** — bind 8 values, then 3, and
+elements 3..7 still hold the old ones. That is exactly what `count` masks off,
+so the pattern is safe as long as the shader honours it.
 
 A held binding takes its capacity from its own type, so updates stay bare too:
 
@@ -404,8 +456,8 @@ the `animate` body.
 
 Authoring a sketch means editing a constant, rebuilding, and looking. Vite
 hot-reloads the new module, which by default drops you back at the camera's
-start position — so every rebuild costs a walk back to whatever you were
-looking at. `import trivalibs.dev.*` fixes that:
+start position — so every rebuild costs a walk back to whatever you were looking
+at. `import trivalibs.dev.*` fixes that:
 
 ```scala
 val cam = PerspectiveCamera(fov = 0.85, near = 0.1, far = 150.0, pos = …)
@@ -421,9 +473,9 @@ devPreserve(cam)          // pos + rotH/rotV survive the reload, restored in pla
   the next reload.
 - **`devMode`** — `true` under the Vite dev server, `false` in a built sketch
   (it tests `import.meta.hot`, which Vite strips in production, so the branch is
-  tree-shaken out). Gate any **development affordance that must not ship** on
-  it — a free-flying camera, a debug overlay, a bypass of a constraint the
-  finished piece depends on:
+  tree-shaken out). Gate any **development affordance that must not ship** on it
+  — a free-flying camera, a debug overlay, a bypass of a constraint the finished
+  piece depends on:
 
   ```scala
   cam.pos = bounds.clearOf(
@@ -442,5 +494,7 @@ Outside dev mode every one of these is inert, so they cost nothing to leave in.
 - Op catalog & shader patterns → [shader-dsl-guide.md](shader-dsl-guide.md)
 - Pitfalls (Double-on-left, mip clobber, F32 vs Double) →
   [gotchas.md](gotchas.md)
+- Offscreen rendering, readback to pixels, screenshots, GPU selection →
+  [painter-setup-guide.md](painter-setup-guide.md)
 - Per-symbol API → Metals `get-docs`/`inspect`, or the Scaladoc site
 - Canonical code → `examples/*`, one per feature

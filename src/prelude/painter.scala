@@ -219,10 +219,37 @@ object painter:
   inline def PanelBinding: trivalibs.graphics.painter.PanelBinding.type =
     trivalibs.graphics.painter.PanelBinding
 
-  // The raw WebGPU facades (`GPUDevice`, `GPUTexture`, `WebGPU`, …) are
-  // deliberately not bundled: no sketch names them, they are the plumbing the
-  // Painter hides — and `@js.native` types cannot be re-exported at all.
-  // Import them directly if you ever need to drop to the raw API.
+  // Painter targets: surfaces and the offscreen pixel targets. `PixelFrames`
+  // and `PixelImage` are `js.Object` traits, so they get the alias treatment.
+  export trivalibs.graphics.painter.`pixels$package`.{
+    PixelTarget as _,
+    *,
+    given,
+  }
+  export trivalibs.graphics.painter.{Surface, CanvasSurface, PixelTarget}
+  type PixelFrames = trivalibs.graphics.painter.PixelFrames
+  inline def PixelFrames: trivalibs.graphics.painter.PixelFrames.type =
+    trivalibs.graphics.painter.PixelFrames
+  type PixelImage = trivalibs.graphics.painter.PixelImage
+  inline def PixelImage: trivalibs.graphics.painter.PixelImage.type =
+    trivalibs.graphics.painter.PixelImage
+
+  // Panel sources: the `TextureSource` / `ExternalImage` types and browser
+  // image loading. `VideoFrame` is a native facade, so it gets an alias.
+  export trivalibs.graphics.painter.`sources$package`.*
+  export trivalibs.graphics.painter.WebImages
+  type VideoFrame = trivalibs.graphics.painter.VideoFrame
+
+  // The raw WebGPU facades (`GPUDevice`, `GPUTexture`, …) are deliberately not
+  // bundled: no sketch names them, they are the plumbing the Painter hides —
+  // and `@js.native` types cannot be re-exported at all. Import them directly
+  // if you ever need to drop to the raw API. The exception is what the
+  // extended setup takes: `GPU` (the parameter of every offscreen entry, an
+  // alias since it is native), `WebGPU` (`adapterNamed`, `requestAdapter`) and
+  // `PowerPreference`.
+  type GPU = trivalibs.graphics.painter.GPU
+  export trivalibs.graphics.painter.WebGPU
+  export trivalibs.graphics.painter.`webgpu$package`.PowerPreference
 
   // ── trivalibs.graphics.shader ──────────────────────────────────────────────
   // `None` is the empty shader contract; renamed so Scala's `None` survives.

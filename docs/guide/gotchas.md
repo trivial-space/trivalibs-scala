@@ -22,10 +22,10 @@ turn, and is the constant to reach for: `t * Tau` is one revolution.
 where that statement sits is where `var t = …;` is emitted — the Scala `val` can
 live anywhere.
 
-That matters around loops. A `var` first assigned inside a `loop` / `loopIf` body
-is declared inside the loop's braces: re-initialised every iteration, and gone
-afterwards (`no definition in scope for identifier` at shade build). Seed an
-accumulator **before** the loop:
+That matters around loops. A `var` first assigned inside a `loop` / `loopIf`
+body is declared inside the loop's braces: re-initialised every iteration, and
+gone afterwards (`no definition in scope for identifier` at shade build). Seed
+an accumulator **before** the loop:
 
 ```scala
 val col = VarVec3("col")
@@ -107,24 +107,38 @@ rebinding, no duplicate shapes. (Works for group-0 uniforms, not just textures.)
 ### Depth textures: bind with `binding(depth = true)`, single-level, lazy-sampleable
 
 Sample a panel's depth attachment by binding `panel.binding(depth = true)` to a
-field declared with a `*DepthPanel` marker (`FragmentDepthPanel`, …); it reads as
-a `DepthTexture2D`. Two traps: (1) the depth attachment is **single-level** — the
-mip pyramid is built on the color texture, so there's no depth `sampleLevel`;
-use `.load` (no sampler) or `.sample`. (2) The depth texture is **lazily
-recreated as sampleable the first time it's sampled**, so the very first frame
-reads an empty depth — a one-frame startup glitch, harmless in an animation loop
-(each `paint(panel)` submits separately, so it's not a validation error).
-Sampling the depth of a **`multisample = true`** panel works too: the painter
-resolves the MSAA depth to a single-sample texture (an internal pass after the
-shapes) and hands that back, so you still read a plain `texture_depth_2d` — no
-special handling needed (it uses subsample 0, which is fine for depth-driven
-effects like fog/DOF).
+field declared with a `*DepthPanel` marker (`FragmentDepthPanel`, …); it reads
+as a `DepthTexture2D`. Two traps: (1) the depth attachment is **single-level** —
+the mip pyramid is built on the color texture, so there's no depth
+`sampleLevel`; use `.load` (no sampler) or `.sample`. (2) The depth texture is
+**lazily recreated as sampleable the first time it's sampled**, so the very
+first frame reads an empty depth — a one-frame startup glitch, harmless in an
+animation loop (each `paint(panel)` submits separately, so it's not a validation
+error). Sampling the depth of a **`multisample = true`** panel works too: the
+painter resolves the MSAA depth to a single-sample texture (an internal pass
+after the shapes) and hands that back, so you still read a plain
+`texture_depth_2d` — no special handling needed (it uses subsample 0, which is
+fine for depth-driven effects like fog/DOF).
 
 ### `paint` order matters; `show` presents
 
 `paint(a, b, c)` renders in order — list panels so a panel that samples another
 comes after it. Nothing reaches the canvas until `show(panel)`. `paintAndShow`
 is just `paint` then `show` for one panel.
+
+### A source panel without shapes can still need `paint`
+
+A panel whose only content is a `source` is filled by `set` alone, at any size
+and format. Two options make it a painted panel even with no shapes or layers:
+
+- `sourceBlend` (blending over the clear color)
+- `followSurface = true` (its size comes from the canvas, so paint it in
+  `onResize`)
+
+A painted panel stays blank until painted — no error — and after each
+`set(source = …)` it shows the new image only from its next `paint`. When in
+doubt, put the panel in the `paint` list: on a source-only panel `paint` does
+nothing, so it costs nothing.
 
 ### HDR needs a float format
 

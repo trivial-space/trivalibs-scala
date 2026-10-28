@@ -1,14 +1,18 @@
 # Native-window hosts — Deno windows, NativeScript
 
 **Status: planned, not scheduled.** A separate issue from offline rendering.
+**Deno is being discontinued**
+([announcement](https://deno.com/blog/cloudflare)), so the Deno-window phase
+below is on hold: its experimental WebGPU window API may not survive a
+hand-over. Its constraints still shape the `Surface` trait.
 
 **Depends on**
-[headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md),
+[headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md),
 which brings in the host seam (`Surface`, `CanvasSurface`,
-`Painter.create(surface, gpu | device)` with the GPU supplied by user code) and
-the headless `CaptureSurface`. This document covers only what is left:
-**rendering on screen outside a browser**. The trait has to admit these hosts
-with one additive change — frame scheduling, below; §3.11 of that plan lists the
+`Painter.init(target, gpu | device)` with the GPU supplied by user code) and the
+headless `CaptureSurface`. This document covers only what is left: **rendering
+on screen outside a browser**. The trait has to admit these hosts with one
+additive change — frame scheduling, below; §3.11 of that plan lists the
 constraints this document puts on it.
 
 ## Frame scheduling
@@ -55,8 +59,11 @@ stays deferred; the Deno window surface does not depend on it.
   `"desktop": { "backend": "raw" }` (not selectable via `--backend`).
 - `win.getNativeWindow()` returns the `Deno.UnsafeWindowSurface`, and **throws
   unless `navigator.gpu.requestAdapter()` has run first**. So the surface must
-  build its context in `configure(device)`, not in its constructor —
-  `Painter.create` already resolves the device first.
+  build its context in `configure(painter)`, not in its constructor —
+  `Painter.init` already resolves the device first. A raw NativeScript canvas
+  passed as `target` is routed to `CanvasSurface` already (no `instanceof`
+  check); whether `CanvasSurface` itself runs there (`clientWidth`,
+  `ResizeObserver`) is this plan's question.
 - `surface.getContext("webgpu")` → `configure({ device, format, alphaMode })`.
 - `surface.width/height` follow `win.getSize()`, updated on the window's
   `resize` event; `UnsafeWindowSurface.resize(w, h)` exists, so it resizes in

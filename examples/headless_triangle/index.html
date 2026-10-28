@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Triangle Sprites - Scala WebGPU</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #1a1a2e;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: system-ui, sans-serif;
+    }
+
+    #container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      width: 90vw;
+      height: 90vh;
+    }
+
+    canvas {
+      border: 2px solid #4a4a6a;
+      border-radius: 4px;
+      width: 100%;
+      height: calc(100% - 2rem);
+    }
+
+    .back-link {
+      position: fixed;
+      top: 1rem;
+      left: 1rem;
+      color: #8888aa;
+      text-decoration: none;
+    }
+
+    .back-link:hover {
+      color: #aaaacc;
+    }
+
+    #status {
+      color: #8888aa;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+
+<body>
+  <a href="/" class="back-link">&larr; Back to examples</a>
+  <div id="container">
+    <canvas id="canvas"></canvas>
+    <div id="status"></div>
+  </div>
+  <script type="module" src="main.js"></script>
+</body>
+
+</html>

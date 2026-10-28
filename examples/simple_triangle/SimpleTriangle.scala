@@ -84,7 +84,7 @@ object SimpleTriangle:
     )
 
     val wgslCode = triangleShader.generateWGSL
-    dom.console.log("Generated WGSL:\n" + wgslCode)
+    log("Generated WGSL:\n" + wgslCode)
 
     // Create shader module
     val shaderModule = device.createShaderModule(

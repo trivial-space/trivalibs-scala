@@ -57,6 +57,10 @@ extension [A](dict: Dict[A])
     js.DynamicImplicits.truthValue(
       dict.asInstanceOf[js.Dynamic].hasOwnProperty(key),
     )
+  inline def delete(key: String): Unit =
+    js.special.delete(dict, key)
+  inline def keys: Arr[String] =
+    js.Object.keys(dict.asInstanceOf[js.Object])
 
 type Arr[A] = js.Array[A]
 
@@ -211,7 +215,29 @@ extension [A](promise: js.Promise[A | Null])
     promise.`then`[A]: value =>
       (value: Opt[A]).getOr(default)
 
-inline def log(args: js.Any*) = js.Dynamic.global.console.log(args*)
+/** `console.log`. Concrete-arity overloads avoid Scala varargs (which drag in
+  * `ScalaRunTime.wrapRefArray` / `toJSVarArgsImpl`), so each call compiles to
+  * a plain `console.log(…)`.
+  */
+inline def log(a: js.Any): Unit =
+  js.Dynamic.global.console.log(a)
+inline def log(a: js.Any, b: js.Any): Unit =
+  js.Dynamic.global.console.log(a, b)
+inline def log(a: js.Any, b: js.Any, c: js.Any): Unit =
+  js.Dynamic.global.console.log(a, b, c)
+inline def log(a: js.Any, b: js.Any, c: js.Any, d: js.Any): Unit =
+  js.Dynamic.global.console.log(a, b, c, d)
+inline def log(a: js.Any, b: js.Any, c: js.Any, d: js.Any, e: js.Any): Unit =
+  js.Dynamic.global.console.log(a, b, c, d, e)
+inline def log(
+    a: js.Any,
+    b: js.Any,
+    c: js.Any,
+    d: js.Any,
+    e: js.Any,
+    f: js.Any,
+): Unit =
+  js.Dynamic.global.console.log(a, b, c, d, e, f)
 
 /** Constructs a throwable that surfaces as a plain JavaScript `Error` with the
   * given message when thrown — use as `throw jsError(message)`.
