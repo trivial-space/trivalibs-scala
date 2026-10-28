@@ -1,7 +1,7 @@
 # `Opt` / `Maybe` extensions shadow dynamic and `Selectable` members
 
 **Status: planned, not implemented.** Found during M1.1 of
-[headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md)
+[headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md)
 (§9, "Library trap"). It was worked around there with a typed facade; this plan
 fixes the cause, and enables explicit nulls (`-Yexplicit-nulls`) for trivalibs
 and the consuming repo in the same change, because the fix depends on it.

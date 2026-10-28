@@ -7,7 +7,7 @@ below is on hold: its experimental WebGPU window API may not survive a
 hand-over. Its constraints still shape the `Surface` trait.
 
 **Depends on**
-[headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md),
+[headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md),
 which brings in the host seam (`Surface`, `CanvasSurface`,
 `Painter.init(target, gpu | device)` with the GPU supplied by user code) and the
 headless `CaptureSurface`. This document covers only what is left: **rendering

@@ -2,17 +2,20 @@
 
 **Status: Milestone 1 (M1.0–M1.4) done: implemented, verified (including the
 browser check of all examples by hand), and its code reviewed in PR #3 with all
-review comments addressed (§9, 2026-10-26). Milestone 2: M2.0a, M2.0, M2.0b and
-M2.1 implemented and headless-tested, the browser check of the new examples by
-hand pending; M2.2 dropped (§6). §1–3 (Milestone 1) reviewed and approved; §4
-onward (Milestone 2) not yet reviewed.** Scope is **offline render to file**,
+review comments addressed (§9, 2026-10-26). Milestone 2 (M2.0a, M2.0, M2.0b,
+M2.1) done: implemented, headless-tested, verified in a desktop browser by hand,
+its implementation reviewed and approved (§9, 2026-10-28), committed and the
+examples deployed; M2.2 dropped (§6). Archived. Everything deferred or later
+moved to
+[headless-and-texture-sources-followups-plan.md](../headless-and-texture-sources-followups-plan.md);
+the sections it came from point there.** Scope is **offline render to file**,
 not on-screen rendering outside the browser. Takes over the host seam and the
-headless phase of [non-browser-hosts-plan.md](non-browser-hosts-plan.md) (its
+headless phase of [non-browser-hosts-plan.md](../non-browser-hosts-plan.md) (its
 `RenderHost` becomes `Surface` here); native-window hosts (Deno windows,
 NativeScript) stay a separate issue in that document, and §3.11 lists what this
 API must keep compatible with them. Also absorbs the
 `with_static_texture_data(bytes)` gap from
-[independent-todos.md](independent-todos.md).
+[independent-todos.md](../independent-todos.md).
 
 Two milestones:
 
@@ -85,7 +88,7 @@ Takeaways:
   all GPU memory at process end. No library teardown needed for this milestone;
   explicit freeing (`Painter.destroy()` and per-resource `destroy()`) is
   deferred to long-running hosts, see
-  [independent-todos.md](independent-todos.md) "GPU resources".
+  [independent-todos.md](../independent-todos.md) "GPU resources".
 - **Verification runs on node-webgpu only.** Deno's runtime is being
   discontinued ([announcement](https://deno.com/blog/cloudflare)). Even if a
   foundation continues it, its experimental native WebGPU and window APIs may
@@ -95,8 +98,9 @@ Takeaways:
   The design itself stays runtime-agnostic: the `GPU` object is passed in.
 - **Deno windows and NativeScript are on-screen hosts** — a real surface with
   `getContext("webgpu")`, closer to the browser than to headless. Out of scope
-  here; tracked in [non-browser-hosts-plan.md](non-browser-hosts-plan.md). The
-  rows above are kept so the `Surface` shape is checked against them (§3.11).
+  here; tracked in [non-browser-hosts-plan.md](../non-browser-hosts-plan.md).
+  The rows above are kept so the `Surface` shape is checked against them
+  (§3.11).
 
 ### 1.2 Adapter selection
 
@@ -267,7 +271,7 @@ Before, they got the observer's fractional CSS size, while the canvas itself was
 already integer-sized.
 
 **No auto-detection** (reasoning carried over from the host-seam design in
-[non-browser-hosts-plan.md](non-browser-hosts-plan.md)): a detecting
+[non-browser-hosts-plan.md](../non-browser-hosts-plan.md)): a detecting
 `init(anything)` makes every surface reachable from every bundle and defeats
 Scala.js DCE. Surfaces are constructed explicitly by the entry point; a browser
 bundle links `CanvasSurface` only, an offline bundle links `CaptureSurface`
@@ -904,47 +908,8 @@ the whole pattern.
 
 ### 3.10 Later: frame streaming (enhancement, not in this plan)
 
-For long sequences the container gains an optional field instead of a new API —
-so §3.5 stays valid unchanged:
-
-```ts
-interface PixelFrames {
-  // …as before…
-  sink?: WritableStream<PixelData> // if set: frames are written here, not kept
-}
-```
-
-Web Streams exist in browsers, Node and Bun with built-in backpressure, and
-every host can put one in front of ffmpeg's stdin (`Writable.toWeb(proc.stdin)`
-on Node, a three-line `WritableStream` over `Bun.spawn`'s sink). A host wanting
-to pull instead uses a `TransformStream` and reads its readable side.
-
-**No new wait API.** With a sink, a frame has "landed" once it is written to the
-stream, so `awaitReadback()` (§3.4) also resolves only once the writer is ready
-again (`writer.ready`, the stream's backpressure). Awaiting it per frame bounds
-memory. It also serializes GPU work and readback, which costs nothing that
-matters offline. A loop that wants the two to overlap awaits every k frames
-instead.
-
-The loop on the Scala side is a recursive step that binds each wait with a `for`
-over the promise extensions in `utils/js.scala`. The recursion does not grow the
-stack, because every step runs in its own microtask:
-
-```scala
-def renderFrom(i: Int): js.Promise[Unit] =
-  if i == FrameCount then js.Promise.resolve(())
-  else
-    update(Tpf)
-    p.paint(scene, final)
-    p.show(final)
-    for
-      _ <- p.awaitReadback()
-      _ <- renderFrom(i + 1)
-    yield ()
-```
-
-Deferred only because nothing needs it yet. The first long render that does adds
-`sink` and makes `awaitReadback` wait on it.
+An optional `sink` stream on the container, with `awaitReadback` waiting on its
+backpressure. Moved to the follow-ups plan, §5.
 
 ### 3.11 Kept compatible: native-window surfaces (separate issue)
 
@@ -1094,19 +1059,8 @@ The size is resolved in `ensureSize`, not stored in `specWidth` / `specHeight`.
 Unsetting the source therefore falls back to rule 4.
 
 **Later: fit modes (follow-up feature, not in this plan).** When the sizes
-disagree, the source is stretched. A follow-up adds a choice modeled on a subset
-of CSS `background-size` / `background-position`:
-
-- `stretch`, the default;
-- `cover`, which fills and crops;
-- `contain`, which fits whole and leaves the rest showing the clear color or the
-  previous content;
-- `none`, at the source's own pixels;
-- an alignment for the last three.
-
-All of them are a UV scale and offset in the background draw, plus discarding
-fragments outside `[0,1]` for `contain` and `none`. The draw path already
-carries everything this needs, so adding the feature changes nothing else.
+disagree, the source is stretched. `cover` / `contain` / `none` with an
+alignment moved to the follow-ups plan, §2.
 
 #### Paths
 
@@ -1278,26 +1232,8 @@ def autoUpload(video: dom.HTMLVideoElement, panel: Panel): () => Unit
 
 **`WebVideo` is deferred** until the first video sketch needs it; no sketch is
 blocked on it. Until then, a video works by calling `panel.set(source = video)`
-by hand. If it is still unneeded once the M2 core has landed, it moves to
-`independent-todos.md`. The design, for then:
-
-`WebVideo.autoUpload` is event-driven, not tied to `paint`:
-
-- A `requestVideoFrameCallback` loop (re-registered in each callback) calls
-  `panel.set(source = video)`. So it uploads exactly **once per new video
-  frame**.
-- A paused or ended video uploads nothing.
-- Seeking while paused presents a frame, which triggers one upload.
-- No `readyState` check is needed, because the callback only fires for a frame
-  that is there.
-- The stop function calls `cancelVideoFrameCallback`.
-
-The callback is Baseline, so there is no `currentTime` fallback. Polling
-`currentTime` would be the wrong signal anyway: it is a continuous clock, so a
-30 fps video in a 60 Hz loop would upload every frame twice.
-
-A canvas that runs its own animation gets no helper: the code that draws into it
-calls `panel.set(source = canvas)` afterwards.
+by hand. The design (a `requestVideoFrameCallback` loop, one upload per new
+video frame) moved to the follow-ups plan, §3.
 
 **Offline** — host side, by the design rule: the host decodes (e.g.
 `sharp(file).raw().ensureAlpha()` → `Uint8Array`, `ktx-parse` for KTX2) and
@@ -1320,11 +1256,8 @@ subject to the same all-in-memory limit as output, §3.7; streaming input is par
 of the later streaming enhancement, §3.10.)
 
 **Zero-copy external textures are deliberately not the first step.** They need a
-new binding kind (`texture_external` + a DSL marker beside `FragmentPanel`),
-per-frame bind group rebuilds, no mips, and are missing on Firefox, node-webgpu
-and Bun's PR. Copy-per-frame costs one GPU copy per frame — negligible below 4K.
-Add `p.videoTexture(video)` as an opt-in binding later, only if a profile asks
-for it; the panel path stays.
+new binding kind, and copy-per-frame is negligible below 4K. Moved to the
+follow-ups plan, §4.
 
 ### 4.5 Offline bake → static asset → sketch
 
@@ -1350,64 +1283,8 @@ A source is a static background: uploaded on `set`, redrawn unchanged on every
 paint. The same slot in the contributor stack — drawn first, under the shapes,
 without touching depth — is just as useful for backgrounds that change every
 frame: an animated pattern, a sky that turns with the camera, the output of
-another panel. Two independent additions get there. Neither is needed by a
-sketch yet.
-
-#### A. Another panel as `source`
-
-`source` also accepts a `Panel` or a `PanelBinding` (an MRT target, or a mip
-level as a cheap blurred background). The source draw stays as it is; only where
-its texture comes from changes.
-
-- **No upload.** `set` reads the size and pixel format from the other panel.
-  `flipY` / `premultipliedAlpha` don't apply, and neither does the path
-  switching (§4.2, "Paths"): there is no own source texture to adopt or restore.
-- **Always painted.** Never the direct path and never source-only, since the
-  content changes whenever the other panel paints. Same ordering rule as any
-  panel binding: paint the source panel first.
-- **Size.** Without `width` / `height`, the panel follows the other panel's
-  current size, resolved in `ensureSize` on each paint — like `followSurface`,
-  tracking a panel instead of the surface.
-- **Bind group cache.** `sourceGroup` is built once today. Another panel's slot
-  0 view changes on reallocation and on every pong swap (`swapPair` bumps
-  `bindEpoch`), so the cache is keyed on `(panelId, bindEpoch)`, the pattern the
-  layer bind cache already uses.
-- **Checks.** A panel can't be its own source (WebGPU forbids sampling the
-  render target). The `rgba32float` / `float32-filterable` check carries over.
-
-Estimate: 80–120 lines, plus tests, docs and an example.
-
-#### B. Fullscreen shapes in the shape pass
-
-The TS painter's model: a layer (then "effect") was a specialization of a shape.
-In the layer stack it ran as a post-processing pass after the shapes; in the
-shape stack it was one more draw — a fullscreen quad — in order with the other
-shapes. Carried over:
-
-- **A depth mode on shapes.** The pipeline key already has one (`n` / `a` / `l`)
-  for the source draw's `depthAlways`; expose it as a shape option. "Always, no
-  writes" is what a background needs — today a user's fullscreen shape at the
-  far plane is discarded by `less` against the cleared 1.0.
-- **A layer shade as a shape.** A fullscreen draw (`draw(3)`, no vertex buffer,
-  `uv` in) of a layer shade, listed in `shapes`. It resolves bindings the way
-  shapes do (panel-level bindings fill unbound slots) and gets the shape pass's
-  MSAA / depth / blend pipeline variants. The auto-injected `src` slot has no
-  meaning there — it would read the target being written — so it must be bound
-  explicitly, or the shape is rejected.
-
-A sky is then a layer shade that turns `uv` and the inverse view-projection into
-a direction and samples an environment map, listed first in `shapes` with depth
-"always". Another panel as background is the same with a blit shade bound to
-that panel — B covers A's use cases, minus the automatic sizing and the
-zero-shader convenience.
-
-**Order.** B first: it is the general one, and it reuses the existing ordering
-model (the shape list) instead of adding a new contributor. A can follow as
-sugar if `source = panel` turns out to be wanted often.
-
-**Considered, not chosen:** a layer shade as `source`. It would make `source`
-hold both uploaded and generated content, while B places generated backgrounds
-where generated content already lives, among the shapes.
+another panel. Fullscreen shapes in the shape pass (with a depth mode on
+shapes), and another panel as `source`, moved to the follow-ups plan, §1.
 
 ---
 
@@ -1517,8 +1394,8 @@ against the shipped API.
 
 ### Milestone 2 — texture sources
 
-**M2.0a — unified panel allocation (§4.2, "Allocation").** ✅ implemented,
-headless-tested; browser check pending.
+**M2.0a — unified panel allocation (§4.2, "Allocation").** ✅ verified in a
+desktop browser by hand.
 
 - Extract `reallocate(w, h)` from `ensureSize`. `set` raises `needsRealloc` when
   a property that affects allocation changes: formats, MSAA, depth, mips, pong
@@ -1530,8 +1407,8 @@ headless-tested; browser check pending.
 - _Proof:_ an example that toggles a pong layer and MSAA at runtime. All
   examples render unchanged.
 
-**M2.0 — static sources, the core (§4.1, §4.2).** The asset case. ✅
-implemented, headless-tested; browser check pending.
+**M2.0 — static sources, the core (§4.1, §4.2).** The asset case. ✅ verified in
+a desktop browser by hand.
 
 - `TextureSource`, `PixelImage` + external-image upload, with `flipY` and
   `premultipliedAlpha`.
@@ -1544,8 +1421,8 @@ implemented, headless-tested; browser check pending.
   downstream. Close the `with_static_texture_data` entry in
   `independent-todos.md`.
 
-**M2.0b — sources in composition (§4.2).** The contributor stack. ✅
-implemented, headless-tested; browser check pending.
+**M2.0b — sources in composition (§4.2).** The contributor stack. ✅ verified in
+a desktop browser by hand.
 
 - The drawn path: the source as the first draw of the shape pass. It needs a
   depth mode in the pipeline key, and supports `sourceBlend` and MSAA.
@@ -1557,8 +1434,8 @@ implemented, headless-tested; browser check pending.
 - _Proof:_ examples with an image background under shapes (with depth), an image
   with a blur / grade layer stack, and a `followSurface` background.
 
-**M2.1 — loading (§4.3).** ✅ implemented; the offline roundtrip runs, the
-browser check is pending.
+**M2.1 — loading (§4.3).** ✅ verified offline (the roundtrip) and in a desktop
+browser by hand.
 
 - `WebImages.load`.
 - _Proof:_ a browser example with a loaded image panel, and an offline driver
@@ -1581,26 +1458,13 @@ An offline video-processing example can follow whenever one is wanted.
 
 ### Later — follow-ups, not in this plan
 
-Each one is designed far enough that it adds to this plan without changing it:
-
-- Frame streaming (§3.10).
-- A public `read`, e.g. for MRT slots (§3.4).
-- A second texture set per panel for repeated `atSize` captures (§3.9).
-- Fit modes for sources (§4.2).
-- Animated backgrounds: fullscreen shapes in the shape pass, another panel as
-  `source` (§4.6).
-- `WebVideo.autoUpload` (§4.3). If it is still unneeded after M2, it moves to
-  `independent-todos.md`.
-- An external-texture binding (§4.4).
-- A Scala-side codec layer (§1.4).
-
-Related, tracked elsewhere:
-
-- In `independent-todos.md`: MRT with one generative layer, and explicit
-  GPU-resource freeing (`Painter.destroy()`).
-- Native-window surfaces and frame scheduling, in
-  [non-browser-hosts-plan.md](non-browser-hosts-plan.md).
-- The bake-or-load switch, consumer side (§4.5).
+All moved to
+[headless-and-texture-sources-followups-plan.md](../headless-and-texture-sources-followups-plan.md):
+frame streaming, a public `read`, a second texture set for repeated `atSize`
+captures, cheaper reallocation, fit modes, animated backgrounds,
+`WebVideo.autoUpload`, an external-texture binding, a Scala-side codec layer,
+the open verifications of §7, and the consumer-side items, with what is tracked
+elsewhere.
 
 ### 6.1 Deliverable: painter setup guide
 
@@ -1641,7 +1505,7 @@ Contents:
   long-running processes.
 
 Native-window surfaces are not a phase of this plan — see
-[non-browser-hosts-plan.md](non-browser-hosts-plan.md).
+[non-browser-hosts-plan.md](../non-browser-hosts-plan.md).
 
 Examples are browser-served today; headless examples carry their own driver
 scripts and are run, not deployed.
@@ -1649,6 +1513,9 @@ scripts and are run, not deployed.
 ---
 
 ## 7. To verify at implementation time
+
+The items still open are carried in the follow-ups plan, §7 (and §3, §4 for
+video).
 
 - ✅ **Bun + node-webgpu** (checked in M1.1, webgpu 0.6.2, Bun 1.4.2, Node
   24.16): Bun loads the addon. `create()`, `mapAsync`, and the `rgba8unorm` /
@@ -1836,7 +1703,7 @@ Implemented together, in one change, because M1.1's readback is built on M1.0b's
   extension, because every value is an `Opt[A]`. It then calls the result as a
   function: `(0, this.l1)(target) is not a function`. It is worked around here
   with a typed facade (`WeakIntMap`). The fix at the cause is planned in
-  [opt-maybe-extension-shadowing-plan.md](opt-maybe-extension-shadowing-plan.md).
+  [opt-maybe-extension-shadowing-plan.md](../opt-maybe-extension-shadowing-plan.md).
 - Shade creation logs every generated WGSL to the console (`log(wgsl)`, which
   predates this change). That is noisy in offline driver output. Leave it, or
   gate it, later.
@@ -2027,6 +1894,53 @@ every path; the browser examples build but are not checked by hand yet.
    §1.5 load snippet and §5.1 input direction. The `with_static_texture_data`
    todo and its port-comparison gap are closed.
 
+### 2026-10-28 — M2 review
+
+Implementation reviewed and approved, the examples checked in a desktop browser
+by hand, committed, and the examples deployed.
+
+1. **Source-only panels render on `set`.** `Panel.sourceOnly` (a source, no
+   shapes, layers, `sourceBlend` or `followSurface`) is the new base predicate;
+   `directSource` is `sourceOnly` at the source's size and format. A source-only
+   panel on the drawn path (a size or format that differs) is drawn at the end
+   of `set` through `Painter.renderPanel`, the body of `paintPanel` after
+   `ensureSize`, and `paint` skips every source-only panel. So "a source alone
+   needs no paint" holds at any fixed size and format; `followSurface` and
+   `sourceBlend` stay painted (§4.2, "Paths"). Test: "a source scales to an
+   explicit size, without painting".
+2. **One source view.** `sourceViews: Opt[TextureViewBundle]` became
+   `sourceView: Opt[GPUTextureView]`: the source draw only samples, so the
+   per-mip views and the blit group were never used. An adopted slot 0
+   contributes its mip-0 view (`attach`), so a source is always drawn from
+   mip 0. Before, an adopted slot 0 of a `mips = true` panel was drawn mipmapped
+   and an uploaded source was not. Shrinking a large image goes through an
+   intermediate source-only panel with mips (sketch guide §2d).
+3. **Kept: `sourceInSlot0`.** Deriving it as `hasSource && sourceTexture.isNull`
+   was considered. It would misread the direct upload's own `ensureSize` call
+   (old pixels still in slot 0, mid-upload), and avoiding that would need
+   `uploadSource` to reallocate itself, a second allocation site. The explicit
+   flag stays.
+4. **Readback holds the `GPU`.** `Readback(device, gpu)`: in-flight reads keep
+   the `GPU` alive, so a script that drops the painter after its last `show` and
+   only awaits `awaitReadback` no longer crashes or hangs node-webgpu.
+   `@JSExport` keeps the otherwise unread field from being linked away. Setup
+   guide §6 (process lifecycle) updated.
+5. **Bundle size.**
+   - `log` has concrete-arity overloads (1–6) instead of varargs; the examples
+     use it instead of `dom.console.log` / `println`.
+   - `js.Object.hasProperty` replaced by `js.special.in`, a raw `in`.
+   - Opaque format values are compared through `.asString` (`PixelFormat` gained
+     one) instead of `==` on the opaque type.
+   - `Surface.onResize` takes a `js.Function2` instead of a Scala function.
+6. **Docs.** Sketch guide §2d: "A source alone needs no `paint`" made precise,
+   plus the shrinking workaround. New gotcha "A source panel without shapes can
+   still need `paint`". This plan: the §4.2 "Paths" note on source-only panels,
+   and §4.6 animated backgrounds (another panel as `source`, fullscreen shapes
+   in the shape pass), listed under "Later".
+7. **Examples.** Small cleanups: `:=` on bindings in `headless_sequence` (its
+   preview re-rendered), an `ImageSize` constant in `source_composition`,
+   formatting.
+
 ## Sources
 
 - node-webgpu: [repo](https://github.com/dawn-gpu/node-webgpu),
@@ -2048,4 +1962,4 @@ every path; the browser examples build but are not checked by hand yet.
   [Image loading on the web](https://www.ludicon.com/castano/blog/2026/05/image-loading-on-the-web/),
   [Firefox 141 WebGPU](https://linuxiac.com/webgpu-lands-in-firefox-141-on-windows-eyes-linux-and-macos-next/)
 - Native-window sources (Deno desktop, NativeScript) are in
-  [non-browser-hosts-plan.md](non-browser-hosts-plan.md).
+  [non-browser-hosts-plan.md](../non-browser-hosts-plan.md).

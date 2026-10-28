@@ -72,7 +72,7 @@ Add a public `destroy(): Unit` to the painter classes that own GPU resources:
   reuse the existing texture-teardown logic (`panel.scala:133-134, 450-458`).
 - **`Painter`** — `destroy()` → `device.destroy()`, plus a pending-work drain
   (`queue.onSubmittedWorkDone()`) before it. Deferred out of
-  [headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md):
+  [headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md):
   render-and-exit scripts end with `process.exit(0)` and let the OS reclaim
   everything. Needed once a **long-running** process renders repeatedly — e.g. a
   server rendering images on demand, where each request's painter (or its
