@@ -1344,6 +1344,71 @@ time matters:
 3. A bake-or-load switch is consumer-side code (`sketchlib`), proposed
    separately — not extracted as part of this work.
 
+### 4.6 Later: animated backgrounds (enhancement, not in this plan)
+
+A source is a static background: uploaded on `set`, redrawn unchanged on every
+paint. The same slot in the contributor stack — drawn first, under the shapes,
+without touching depth — is just as useful for backgrounds that change every
+frame: an animated pattern, a sky that turns with the camera, the output of
+another panel. Two independent additions get there. Neither is needed by a
+sketch yet.
+
+#### A. Another panel as `source`
+
+`source` also accepts a `Panel` or a `PanelBinding` (an MRT target, or a mip
+level as a cheap blurred background). The source draw stays as it is; only where
+its texture comes from changes.
+
+- **No upload.** `set` reads the size and pixel format from the other panel.
+  `flipY` / `premultipliedAlpha` don't apply, and neither does the path
+  switching (§4.2, "Paths"): there is no own source texture to adopt or restore.
+- **Always painted.** Never the direct path and never source-only, since the
+  content changes whenever the other panel paints. Same ordering rule as any
+  panel binding: paint the source panel first.
+- **Size.** Without `width` / `height`, the panel follows the other panel's
+  current size, resolved in `ensureSize` on each paint — like `followSurface`,
+  tracking a panel instead of the surface.
+- **Bind group cache.** `sourceGroup` is built once today. Another panel's slot
+  0 view changes on reallocation and on every pong swap (`swapPair` bumps
+  `bindEpoch`), so the cache is keyed on `(panelId, bindEpoch)`, the pattern the
+  layer bind cache already uses.
+- **Checks.** A panel can't be its own source (WebGPU forbids sampling the
+  render target). The `rgba32float` / `float32-filterable` check carries over.
+
+Estimate: 80–120 lines, plus tests, docs and an example.
+
+#### B. Fullscreen shapes in the shape pass
+
+The TS painter's model: a layer (then "effect") was a specialization of a shape.
+In the layer stack it ran as a post-processing pass after the shapes; in the
+shape stack it was one more draw — a fullscreen quad — in order with the other
+shapes. Carried over:
+
+- **A depth mode on shapes.** The pipeline key already has one (`n` / `a` / `l`)
+  for the source draw's `depthAlways`; expose it as a shape option. "Always, no
+  writes" is what a background needs — today a user's fullscreen shape at the
+  far plane is discarded by `less` against the cleared 1.0.
+- **A layer shade as a shape.** A fullscreen draw (`draw(3)`, no vertex buffer,
+  `uv` in) of a layer shade, listed in `shapes`. It resolves bindings the way
+  shapes do (panel-level bindings fill unbound slots) and gets the shape pass's
+  MSAA / depth / blend pipeline variants. The auto-injected `src` slot has no
+  meaning there — it would read the target being written — so it must be bound
+  explicitly, or the shape is rejected.
+
+A sky is then a layer shade that turns `uv` and the inverse view-projection into
+a direction and samples an environment map, listed first in `shapes` with depth
+"always". Another panel as background is the same with a blit shade bound to
+that panel — B covers A's use cases, minus the automatic sizing and the
+zero-shader convenience.
+
+**Order.** B first: it is the general one, and it reuses the existing ordering
+model (the shape list) instead of adding a new contributor. A can follow as
+sugar if `source = panel` turns out to be wanted often.
+
+**Considered, not chosen:** a layer shade as `source`. It would make `source`
+hold both uploaded and generated content, while B places generated backgrounds
+where generated content already lives, among the shapes.
+
 ---
 
 ## 5. WebGPU facade additions
@@ -1522,6 +1587,8 @@ Each one is designed far enough that it adds to this plan without changing it:
 - A public `read`, e.g. for MRT slots (§3.4).
 - A second texture set per panel for repeated `atSize` captures (§3.9).
 - Fit modes for sources (§4.2).
+- Animated backgrounds: fullscreen shapes in the shape pass, another panel as
+  `source` (§4.6).
 - `WebVideo.autoUpload` (§4.3). If it is still unneeded after M2, it moves to
   `independent-todos.md`.
 - An external-texture binding (§4.4).
