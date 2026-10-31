@@ -53,12 +53,6 @@ class PanelBinding(
 
 type PanelBindingValue = BufferBinding[?, ?] | GPUSampler | Panel | PanelBinding
 
-// Monotonic per-panel id source. Global (not device-scoped) so it needs no
-// `painter` — every panel gets a process-unique id. Load-bearing for the layer
-// bind-group cache key (see `LayerBindCache`): a layer reused across panels must
-// key-mismatch and rebuild, never reuse another panel's bind group.
-private var panelIdSeq: Int = 0
-
 /** A render target: owns one or more GPU textures and renders its ordered
   * [[shapes]] then ordered [[layers]] into them when passed to
   * [[Painter.paint]]. Create via [[Painter.panel]]; mutate later with [[set]].
@@ -94,13 +88,17 @@ class Panel private[painter] (val painter: Painter):
   // sketch code and references this field directly.
   var runtimeBindings: Dict[PanelBindingValue] = Dict[PanelBindingValue]()
 
-  // Process-unique id, part of the layer bind-group cache key.
-  private[painter] val panelId: Int =
-    panelIdSeq += 1
-    panelIdSeq
-  // Bumped whenever slot-0's view changes under a cached layer bind group:
-  // `swapPair` (rotates slot 0) and `ensureSize` realloc (new textures). The
-  // layer cache treats an epoch mismatch as "invalidate + rebuild".
+  /** Changes whenever a view that a bind group could hold for this panel is
+    * replaced or destroyed: color views of any slot or mip level, the depth
+    * view, the resolved depth view. Cached bind groups that sample this panel
+    * compare it to the value they were built with and rebuild on a mismatch.
+    *
+    * **Contract:** every change to `Panel` that replaces, swaps, moves or
+    * destroys a texture or view must call [[viewsChanged]]. A missed call fails
+    * silently: cached bind groups keep sampling the stale or destroyed texture.
+    * Current call sites: `swapPair`, `reallocate`, `allocDepth`,
+    * `adoptSlot0AsSource`.
+    */
   private[painter] var bindEpoch: Int = 0
 
   // Slot-indexed render textures + their view bundles, lockstep. Length is
@@ -212,10 +210,9 @@ class Panel private[painter] (val painter: Painter):
 
   /** Rotate slot 0 ↔ slot 1 (texture + view bundle together) after a ping-pong
     * layer pass, so the just-written pong scratch (slot 1) becomes the live
-    * result (slot 0). The view bundles travel with their textures, so nothing
-    * else needs invalidating. Called per pong layer, keeping slot 0
-    * authoritative at every point — the next layer, external samplers,
-    * `show()`, and mip generation all read slot 0.
+    * result (slot 0). The view bundles travel with their textures. Called per
+    * pong layer, keeping slot 0 authoritative at every point — the next layer,
+    * external samplers, `show()`, and mip generation all read slot 0.
     */
   private[painter] def swapPair(): Unit =
     val t = textures(0)
@@ -224,12 +221,17 @@ class Panel private[painter] (val painter: Painter):
     val sv = views(0)
     views(0) = views(1)
     views(1) = sv
+    viewsChanged()
+
+  /** Bump [[bindEpoch]]; see its contract. */
+  private[painter] def viewsChanged(): Unit =
     bindEpoch += 1
 
   // (Re)allocate the depth render texture (and, for a sampled MSAA panel, the
   // single-sample resolve texture). Shared by `ensureSize` and the lazy upgrade
   // in `depthSamplingView`.
   private def allocDepth(): Unit =
+    viewsChanged()
     if depthTexture != null then depthTexture.get.destroy()
     if resolvedDepthTexture != null then resolvedDepthTexture.get.destroy()
     val depthUsage =
@@ -751,9 +753,7 @@ class Panel private[painter] (val painter: Painter):
 
     if depthTest then allocDepth()
 
-    // Textures (and their views) are all fresh — any cached layer bind group
-    // referencing the old ones is now stale.
-    bindEpoch += 1
+    viewsChanged()
 
   // Records a new source's size and formats; the upload follows once the
   // allocation inputs are settled.
@@ -846,6 +846,7 @@ class Panel private[painter] (val painter: Painter):
     sourceView = views.shift().attach
     sourceInSlot0 = false
     needsRealloc = true
+    viewsChanged()
 
   // Back on the direct path: copy the source texture into slot 0, which has
   // its size and format, and free it.

@@ -572,3 +572,124 @@ class HeadlessPainterTest extends FunSuite:
       p.paint(panel)
       p.showTo(panel, PixelImage(1, 1)).toFuture.map: img =>
         assertEquals(pixels(img), Seq(64.0, 64.0, 0.0, 255.0))
+
+  // ---- bind-group cache ----
+
+  private def copyLayer(p: Painter, src: Panel) =
+    val shade = p.layerShade[(samp: Sampler), (src: FragmentPanel)]: program =>
+      program.frag: ctx =>
+        ctx.out.color := ctx.textures.src(ctx.in.uv, ctx.bindings.samp)
+    p.layer(shade).bind("src" := src, "samp" := p.samplerNearest)
+
+  test("a static layer follows a sampled pong panel across swaps"):
+    val out = PixelImage(4, 3)
+    val src = checker(4, 3)
+    painterOn(out).flatMap: p =>
+      val pong = p.panel(source = src, layer = invertLayer(p))
+      val copy = p.panel(layer = copyLayer(p, pong))
+      p.paint(pong)
+      p.paint(copy)
+      p.paint(pong)
+      p.paint(copy)
+      p.showTo(copy, PixelImage(4, 3)).toFuture.map: img =>
+        assertEquals(pixels(img), inverted(src))
+
+  private class Counter:
+    var n = 0
+
+  // Count the device's `createBindGroup` calls from here on.
+  private def countBindGroups(p: Painter): Counter =
+    val counter = Counter()
+    val device = p.device.asInstanceOf[js.Dynamic]
+    val original = device.createBindGroup.bind(device)
+    device.createBindGroup = ((descriptor: js.Dynamic) =>
+      counter.n += 1
+      original(descriptor)
+    ): js.Function1[js.Dynamic, js.Dynamic]
+    counter
+
+  test("bind groups are built once and survive raw uniform updates"):
+    painterOn(PixelImage(1, 1)).map: p =>
+      val shape = fullscreenShape(p, Vec3(1.0, 0.0, 0.0))
+      val value = p.binding(0.0)
+      val layer = p.layer(valueShade(p), blendState = BlendState.Additive)
+      layer.bind("value" := value)
+      val panel = p.panel(shape = shape, layer = layer)
+      val counter = countBindGroups(p)
+      p.paint(panel)
+      assertEquals(counter.n, 2)
+      var frame = 0
+      while frame < 3 do
+        shape.bind("color" := Vec3(0.0, frame * 0.25, 0.0))
+        value.set(frame * 0.25)
+        p.paint(panel)
+        frame += 1
+      assertEquals(counter.n, 2)
+      shape.bind("color" := p.binding(Vec3(0.0, 0.0, 1.0)))
+      p.paint(panel)
+      p.paint(panel)
+      assertEquals(counter.n, 3)
+
+  test("texture groups rebuild only when a sampled panel changes"):
+    painterOn(PixelImage(4, 3)).map: p =>
+      val pong = p.panel(source = checker(4, 3), layer = invertLayer(p))
+      val stable = p.panel(source = checker(4, 3))
+      val copyPong = p.panel(layer = copyLayer(p, pong))
+      val copyStable = p.panel(layer = copyLayer(p, stable))
+      def frame() =
+        p.paint(pong)
+        p.paint(copyPong)
+        p.paint(copyStable)
+      frame()
+      val counter = countBindGroups(p)
+      frame()
+      frame()
+      // per frame: the pong layer's own source view, and the copy sampling it
+      assertEquals(counter.n, 4)
+      counter.n = 0
+      stable.set(source = checker(2, 2))
+      frame()
+      assertEquals(counter.n, 3)
+      counter.n = 0
+      frame()
+      assertEquals(counter.n, 2)
+
+  test("each view change of a panel bumps its bind epoch"):
+    painterOn(PixelImage(2, 2)).map: p =>
+      val pong = p.panel(source = checker(2, 2), layer = invertLayer(p))
+      p.paint(pong)
+      val beforeSwap = pong.bindEpoch
+      p.paint(pong)
+      assert(pong.bindEpoch != beforeSwap, "swapPair")
+
+      val sized = p.panel(width = 2, height = 2)
+      p.paint(sized)
+      val beforeResize = sized.bindEpoch
+      sized.set(width = 3)
+      p.paint(sized)
+      assert(sized.bindEpoch != beforeResize, "reallocate")
+
+      val scene = p.panel(
+        depthTest = true,
+        clearColor = (0.0, 0.0, 0.0, 1.0),
+        shape = fullscreenShape(p, Vec3(1.0, 0.0, 0.0)),
+      )
+      p.paint(scene)
+      val beforeDepthUpgrade = scene.bindEpoch
+      val depthShade = p.layerShade[EmptyTuple, (depth: FragmentDepthPanel)]:
+        program =>
+          program.frag: ctx =>
+            val d = ctx.textures.depth.load(ivec2(ctx.fragCoord.xy))
+            ctx.out.color := vec4(d, 0.0, 0.0, 1.0)
+      val reader = p.panel(
+        layer =
+          p.layer(depthShade).bind("depth" := scene.binding(depth = true)),
+      )
+      val counter = countBindGroups(p)
+      p.paint(reader)
+      assert(scene.bindEpoch != beforeDepthUpgrade, "allocDepth")
+      p.paint(reader)
+      assertEquals(counter.n, 1)
+      p.paint(scene)
+      p.paint(reader)
+      assertEquals(counter.n, 1)

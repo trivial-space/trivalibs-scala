@@ -25,6 +25,26 @@ class BindPair[N <: String & Singleton, V](val name: N, val value: V)
 extension [N <: String & Singleton](name: N)
   inline def :=[V](value: V): BindPair[N, V] = BindPair(name, value)
 
+/** The bind groups the painter cached for the draws of one [[Bindable]] owner:
+  * the instance of an instanced draw, otherwise the shape or layer. Each group
+  * is valid while the owner's (and, for an instance, its parent's)
+  * `bindVersion` is unchanged; group 1 also needs the `bindEpoch` of every
+  * panel it samples, and — when slot 0 fell back to the previous output — the
+  * same `srcView`. Draws with panel runtime bindings bypass the cache.
+  */
+private[painter] final class BindCache:
+  var valueGroup: Opt[GPUBindGroup] = null
+  var valueVersion: Int = -1
+  var valueParentVersion: Int = -1
+  var panelGroup: Opt[GPUBindGroup] = null
+  var panelVersion: Int = -1
+  var panelParentVersion: Int = -1
+  // Per group-1 slot: the sampled panel (null for `srcView`) and its epoch.
+  val panels: Arr[Opt[Panel]] = Arr()
+  val epochs: Arr[Int] = Arr()
+  // The `srcView` slot 0 fell back to, or null when slot 0 was bound.
+  var srcView: Opt[GPUTextureView] = null
+
 /** Mixin for things that carry shader bindings — [[Shape]], [[Layer]],
   * [[Instance]]. Provides the `bind(...)` overloads (1–8 [[BindPair]]s; chain
   * for more) that assign uniform/panel values by field name. Accepted values: a
@@ -38,11 +58,33 @@ trait Bindable[U, P]:
   var bindings: BindingSlots
   var panelBindings: Arr[Opt[PanelBinding]]
 
-  // Hook fired after any `.bind(...)` mutation. Default no-op; [[Layer]] overrides
-  // it to drop its static bind-group cache. (Fires on in-place uniform re-sets
-  // too — harmless: it just means a per-frame-rebinding layer forgoes caching,
-  // exactly today's rebuild-every-draw behaviour.)
-  protected def onBindingsChanged(): Unit = ()
+  /** Bumped when a slot of this owner now refers to a different object — a
+    * first bind, or a different `BufferBinding` / `GPUSampler` / panel view.
+    * A raw value written into the slot's existing buffer does not bump it. The
+    * painter's bind-group cache compares it.
+    */
+  private[painter] var bindVersion: Int = 0
+
+  /** The painter's cached bind groups for draws owned by this binder. */
+  private[painter] var bindCache: Opt[BindCache] = null
+
+  protected def setValueSlot(
+      idx: Int,
+      value: BufferBinding[?, ?] | GPUSampler,
+  ): Unit =
+    while bindings.length <= idx do bindings.push(null)
+    if !js.special.strictEquals(bindings(idx), value) then
+      bindings(idx) = value
+      bindVersion += 1
+
+  protected def setPanelSlot(idx: Int, pb: PanelBinding): Unit =
+    while panelBindings.length <= idx do panelBindings.push(null)
+    val old = panelBindings(idx)
+    if old == null || old.panel != pb.panel || old.index != pb.index ||
+      old.mipLevel != pb.mipLevel || old.depth != pb.depth
+    then
+      panelBindings(idx) = pb
+      bindVersion += 1
 
   inline def bind[N1 <: String & Singleton, V1](
       e1: BindPair[N1, V1],
@@ -232,14 +274,10 @@ trait Bindable[U, P]:
       inline pair.value match
         case sampler: GPUSampler =>
           derive.checkSamplerFieldType[N, U]
-          val idx = shade.uniformIndices.at(pair.name)
-          while bindings.length <= idx do bindings.push(null)
-          bindings(idx) = sampler
+          setValueSlot(shade.uniformIndices.at(pair.name), sampler)
         case bb: BufferBinding[?, ?] =>
           derive.checkUniformFieldType[N, V, U]
-          val idx = shade.uniformIndices.at(pair.name)
-          while bindings.length <= idx do bindings.push(null)
-          bindings(idx) = bb
+          setValueSlot(shade.uniformIndices.at(pair.name), bb)
         case rawValue =>
           derive.checkUniformFieldType[N, V, U]
           val idx = shade.uniformIndices.at(pair.name)
@@ -255,18 +293,13 @@ trait Bindable[U, P]:
             existing,
             rawValue,
           )
-          while bindings.length <= idx do bindings.push(null)
-          bindings(idx) = bb
+          setValueSlot(idx, bb)
     else inline if derive.containsName[N, P] then
       inline pair.value match
         case pb: PanelBinding =>
-          val idx = shade.panelIndices.at(pair.name)
-          while panelBindings.length <= idx do panelBindings.push(null)
-          panelBindings(idx) = pb
+          setPanelSlot(shade.panelIndices.at(pair.name), pb)
         case p: Panel =>
-          val idx = shade.panelIndices.at(pair.name)
-          while panelBindings.length <= idx do panelBindings.push(null)
-          panelBindings(idx) = PanelBinding(p)
+          setPanelSlot(shade.panelIndices.at(pair.name), PanelBinding(p))
         case _ =>
           scala.compiletime.error(
             "Panel binding value must be a Panel or PanelBinding instance",
@@ -275,7 +308,6 @@ trait Bindable[U, P]:
       scala.compiletime.error(
         "Name not found in Uniforms or Panel bindings",
       )
-    onBindingsChanged()
 
 /** A drawable: a [[Form]] (geometry) rendered with a [[Shade]], plus its bound
   * uniforms/panels and optional per-instance draws. Create via

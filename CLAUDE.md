@@ -110,7 +110,16 @@ with minimal low-level overhead.
 - `src/graphics/geometry/` — mesh / plane / grid / polygon / shape geometry.
 - `src/graphics/scene/` — transform / camera / scene graph.
 - `src/graphics/painter/` — the Painter abstraction. `webgpu.scala` holds the
-  manual WebGPU JS facade traits — painter-internal, not a generic binding.
+  manual WebGPU JS facade traits — painter-internal, not a generic binding. Bind
+  groups are cached per shape / layer / instance (`BindCache`) and validated by
+  two counters, so both have a hard rule:
+  - **Any change to `Panel` that replaces, swaps, moves or destroys a texture or
+    view must call `viewsChanged()`** (bumps `bindEpoch`). A missed call fails
+    silently: cached bind groups keep sampling the stale or destroyed texture.
+    See the `bindEpoch` doc comment for the current call sites.
+  - **Slot writes go through `Bindable.setValueSlot` / `setPanelSlot`**, which
+    bump `bindVersion` when the slot's reference changes. Never assign
+    `bindings` / `panelBindings` entries directly.
 - `src/utils/` — generic JS helpers: `bufferdata.scala`
   (`StructArray`/`StructRef`, zero-cost typed binary buffers), `numbers.scala`
   (numeric extensions), `js.scala` (interop helpers), `animate.scala`

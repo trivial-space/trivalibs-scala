@@ -1,8 +1,9 @@
 # Binding resolution and bind-group caching
 
-**Status: step 1 implemented (2026-11-01), headless-tested; browser check of the
-examples pending. Step 2 planned.** Internal refactor of `Painter` in two steps,
-each shippable and checkable on its own. No API change.
+**Status: step 1 implemented and browser-checked (2026-11-01). Step 2
+implemented (2026-11-01), headless-tested; browser check of the examples
+pending.** Internal refactor of `Painter` in two steps, each shippable and
+checkable on its own. No API change.
 
 - **Step 1 — resolver.** One code path that resolves each slot while building
   its bind group. Behavior changes: the slot-0 rule, the auto-pong rule (incl.
@@ -262,12 +263,19 @@ read. Bump sites after step 2 (verified: these are the only places that replace
 a panel's views):
 
 - `swapPair`, on every ping-pong pass;
-- `ensureSize`, on realloc — this also covers uploads through `Panel.set` that
-  reach it;
+- `reallocate` (called by `ensureSize`), on realloc — this also covers uploads
+  through `Panel.set` that reach it;
 - `allocDepth`, **new**: the lazy depth upgrade in `depthSamplingView` destroys
   and recreates the depth texture without a bump today. It is safe only because
   the first group sampling depth triggers the upgrade during its own build; it
   must bump regardless.
+- `adoptSlot0AsSource`, **new** (found while implementing): it shifts slot 0's
+  texture and view out into the source. A `reallocate` always follows today, but
+  the shift itself changes the views.
+
+The cache also checks the `srcView` it was built with by identity, instead of
+the target panel's epoch: one reference compare that covers a swap, a realloc, a
+changed `mipSource` and the same layer drawn into another panel.
 
 To keep the contract visible to future panel work, step 2 delivers:
 
@@ -326,14 +334,29 @@ cache key reads it) and the `onBindingsChanged` hook (replaced by
 
 - Reproduce the stale-layer bug before the change (a static layer sampling a
   pong panel, or a panel that is resized), and keep it as a test if the headless
-  painter allows.
-- The per-bump-site tests above.
+  painter allows. _Done: "a static layer follows a sampled pong panel across
+  swaps" failed before step 2 (it showed the source before the invert, the stale
+  slot-0 texture) and passes after._
+- The per-bump-site tests above. _Done for `swapPair`, `reallocate` and
+  `allocDepth` (epoch changes; the depth reader's group is built once, after the
+  upgrade). Not covered: `adoptSlot0AsSource`._
 - Count `createBindGroup` calls in `HeadlessPainterTest` by wrapping the
   device's `createBindGroup` (a plain JS method on node-webgpu's `GPUDevice`,
   same API as the browser's; only the cost differs, not the count): after the
   first frame, per-frame `.bind` of raw values creates no group-0 groups;
   rebinding a different `BufferBinding` creates exactly one; group-1 groups are
   created only for groups that sample a pong panel, and once more after a
-  resize.
-- All examples render unchanged.
-- `jsMode full` bundle of an example: no growth.
+  resize. _Done._
+- The cache tests fail against three mutations: no bump in `allocDepth`,
+  `bindVersion` bumped on every bind, the epoch check disabled. _Done._
+- All examples render unchanged. _Pending: browser check by hand._
+- `jsMode full` bundle of an example: no growth. _Measured against HEAD (before
+  step 1): +926 to +1,183 B minified, +288 to +350 B gzipped per example
+  (`panel_triangle`, `deferred`, `instances`); step 1 accounts for 154 B of it.
+  The rest is the cache itself: `BindCache`, the cached branch of
+  `setBindGroups`, `panelViewsCurrent`, the slot setters._
+
+Found while testing, unrelated to this plan: sampling a panel's depth
+(`FragmentDepthPanel`, `binding(depth = true)`) in the headless painter reads 0
+instead of the written depth 0.5 — at HEAD too, before either step. Not
+investigated.
