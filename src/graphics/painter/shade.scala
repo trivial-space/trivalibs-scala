@@ -23,4 +23,21 @@ class Shade[U, P] @publicInBinary private[painter] (
     private[painter] val isLayer: Boolean,
     val uniformIndices: Dict[Int],
     val panelIndices: Dict[Int],
-)
+):
+  /** Slot index → uniform field name; inverse of [[uniformIndices]]. */
+  private[painter] val uniformNames: Arr[String] = slotNames(uniformIndices)
+
+  /** Slot index → panel field name; inverse of [[panelIndices]]. */
+  private[painter] val panelNames: Arr[String] = slotNames(panelIndices)
+
+  private def slotNames(indices: Dict[Int]): Arr[String] =
+    val keys =
+      js.Object.keys(indices.asInstanceOf[js.Object]).asInstanceOf[Arr[String]]
+    val names = Arr[String]()
+    var i = 0
+    while i < keys.length do
+      val idx = indices.at(keys(i))
+      while names.length <= idx do names.push("")
+      names(idx) = keys(i)
+      i += 1
+    names

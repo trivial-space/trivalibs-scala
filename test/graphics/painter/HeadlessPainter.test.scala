@@ -506,3 +506,69 @@ class HeadlessPainterTest extends FunSuite:
           pixels(out),
           Seq.fill(15)(Seq(40.0, 80.0, 160.0, 255.0)).flatten,
         )
+
+  // ---- binding resolution ----
+
+  private def redOf(p: Painter, panel: Panel): Future[Double] =
+    p.paint(panel)
+    p.showTo(panel, PixelImage(1, 1)).toFuture.map(img => channel(img, 0, 0, 0))
+
+  test("bindings resolve instance over layer over panel runtime"):
+    painterOn(PixelImage(1, 1)).flatMap: p =>
+      val layerOverRuntime =
+        p.panel(layer = p.layer(valueShade(p)).bind("value" := p.binding(0.2)))
+      layerOverRuntime.bind("value" := p.binding(0.9))
+
+      val runtimeFills = p.panel(layer = p.layer(valueShade(p)))
+      runtimeFills.bind("value" := p.binding(0.9))
+
+      val instanced = p.layer(valueShade(p)).bind("value" := p.binding(0.2))
+      instanced.instances.add("value" := p.binding(0.6))
+      val instanceOverAll = p.panel(layer = instanced)
+      instanceOverAll.bind("value" := p.binding(0.9))
+
+      for
+        a <- redOf(p, layerOverRuntime)
+        b <- redOf(p, runtimeFills)
+        c <- redOf(p, instanceOverAll)
+      yield
+        assertEqualsDouble(a, 51.0, 1.0)
+        assertEqualsDouble(b, 229.5, 1.0)
+        assertEqualsDouble(c, 153.0, 1.0)
+
+  test("an unbound uniform throws, naming it"):
+    painterOn(PixelImage(1, 1)).map: p =>
+      val panel = p.panel(layer = p.layer(valueShade(p)))
+      val error = intercept[js.JavaScriptException]:
+        p.paint(panel)
+      assert(error.getMessage.contains("'value' is not bound"))
+
+  private def additiveSampleLayer(p: Painter) =
+    val shade = p.layerShade[(samp: Sampler), (src: FragmentPanel)]: program =>
+      program.frag: ctx =>
+        ctx.out.color := ctx.textures.src(ctx.in.uv, ctx.bindings.samp)
+    p.layer(shade, blendState = BlendState.Additive)
+      .bind("samp" := p.samplerNearest)
+
+  test("a layer whose instances all bind slot 0 composites onto the result"):
+    painterOn(PixelImage(1, 1)).flatMap: p =>
+      val layer = additiveSampleLayer(p)
+      layer.instances.add("src" := p.panel(source = solid(1, 1, 0, 64, 0, 255)))
+      layer.instances.add("src" := p.panel(source = solid(1, 1, 0, 0, 64, 255)))
+      val panel =
+        p.panel(clearColor = (64.0 / 255.0, 0.0, 0.0, 1.0), layer = layer)
+      p.paint(panel)
+      p.showTo(panel, PixelImage(1, 1)).toFuture.map: img =>
+        assertEquals(pixels(img), Seq(64.0, 64.0, 64.0, 255.0))
+
+  test("a pong layer with mixed instances sums its draws over black"):
+    painterOn(PixelImage(1, 1)).flatMap: p =>
+      val layer = additiveSampleLayer(p)
+      layer.instances.add("src" := p.panel(source = solid(1, 1, 0, 64, 0, 255)))
+      layer.instances.add()
+      val panel =
+        p.panel(clearColor = (64.0 / 255.0, 0.0, 0.0, 1.0), layer = layer)
+      p.paint(panel)
+      p.paint(panel)
+      p.showTo(panel, PixelImage(1, 1)).toFuture.map: img =>
+        assertEquals(pixels(img), Seq(64.0, 64.0, 0.0, 255.0))

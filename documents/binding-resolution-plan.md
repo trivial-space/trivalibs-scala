@@ -1,6 +1,7 @@
 # Binding resolution and bind-group caching
 
-**Status: planned, not scheduled.** Internal refactor of `Painter` in two steps,
+**Status: step 1 implemented (2026-11-01), headless-tested; browser check of the
+examples pending. Step 2 planned.** Internal refactor of `Painter` in two steps,
 each shippable and checkable on its own. No API change.
 
 - **Step 1 — resolver.** One code path that resolves each slot while building
@@ -201,15 +202,20 @@ step 2 it runs only when a group is built.
 ### Step 1 proof
 
 - All examples render unchanged (shapes, layers, instances, panel runtime
-  bindings, ping-pong, mip chains).
-- Existing painter tests pass; add a test for the precedence order (instance >
-  shape/layer > panel runtime) if the headless painter makes it cheap.
-- A shape with an unbound uniform throws, naming the slot.
+  bindings, ping-pong, mip chains). _Pending: browser check by hand._
+- Existing painter tests pass. _Done: all 39 suites._
+- Precedence order (instance > shape/layer > panel runtime). _Done:
+  `HeadlessPainterTest`._
+- A shape with an unbound uniform throws, naming the slot. _Done: tested on an
+  unbound layer uniform._
 - Auto-pong, headless: a blend layer whose instances all bind slot 0 composites
   onto the live result (no swap); an additive pong layer with mixed instances
   outputs exactly the sum of its draws over black, each reading the same
-  `srcView`.
-- `jsMode full` bundle of an example: no growth.
+  `srcView`. _Done; both tests fail against the old pong decision and against
+  `loadOp = "load"`._
+- `jsMode full` bundle of an example: no growth. _Measured: +154 B minified (≈
+  +45 B gzipped) per example, from the missing-binding message,
+  `Shade.slotNames` and `Layer.pongsOn`._
 
 ## Step 2 — cache
 

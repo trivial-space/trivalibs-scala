@@ -610,13 +610,12 @@ class Panel private[painter] (val painter: Painter):
     processPanelEntry(e8)
     this
 
-  // Allocate a pong scratch iff some layer auto-pongs. Uses the shared
-  // `Layer.autoPongsSlot0` predicate — the stricter form, so a layer that
-  // manually binds slot 0 no longer over-allocates an unused pong texture.
+  // Allocate a pong scratch iff some layer may auto-pong (`Layer.mayPong`, a
+  // superset of the per-frame `Layer.pongsOn`).
   private def needsPong: Boolean =
     var i = 0
     while i < layers.length do
-      if layers(i).autoPongsSlot0 then return true
+      if layers(i).mayPong then return true
       i += 1
     false
 

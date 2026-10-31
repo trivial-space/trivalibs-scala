@@ -93,6 +93,16 @@ a chain of single-format panels instead (each panel does one thing, the next
 reads the previous panel's output). A layer that manually binds its first slot
 is _not_ auto-pong and is fine on an MRT panel.
 
+The first slot also counts as bound when the panel binds it
+(`panel.bind("scene" := …)`), or when **every** instance of the layer binds it.
+So a layer whose instances each sample their own texture (one additive draw per
+light, deferred-style) composites onto the live result instead of ponging. If at
+least one draw leaves the slot empty, the whole layer pongs: it renders all its
+instances into a cleared scratch target — the instances that bound the slot read
+their texture, the others the previous result — and that composite replaces the
+result. In short: **a layer that reads the previous output replaces it; a layer
+that doesn't composites onto it.**
+
 ### Panel-level bindings fill a shape's _unbound_ slots — reuse a shape across panels
 
 `panel.bind("name" := value)` supplies a uniform / sampler / texture to every

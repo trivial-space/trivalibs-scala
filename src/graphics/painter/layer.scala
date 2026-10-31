@@ -70,18 +70,38 @@ class Layer[U, P] private[painter] (
     */
   val instances: InstanceList[U, P] = InstanceList[U, P](shade, painter)
 
-  /** Whether this layer triggers an auto-pong pass: it has a panel-texture bind
-    * group, but its first panel slot is *not* manually bound — so the painter
-    * injects the previous pass's output there and ping-pongs. The single static
-    * source of truth for the pong-dispatch decision, shared by pong allocation
-    * ([[Panel.ensureSize]] via `needsPong`), the config-time MRT invariant, and
-    * the `paintPanel` layer-loop dispatcher. The runtime `effectiveSrcView` gate
-    * in `renderLayerOnPass` stays independent (a panel runtime binding can
-    * override slot 0 even for a pong-dispatched layer).
+  /** Whether this layer *may* ping-pong: it has a panel-texture bind group, but
+    * does not bind its first panel slot itself. Static and conservative — it
+    * ignores instances and panel runtime bindings — so it is safe for pong
+    * allocation ([[Panel.ensureSize]] via `needsPong`) and the config-time MRT
+    * invariant. Whether it actually pongs on a panel is [[pongsOn]].
     */
-  private[painter] def autoPongsSlot0: Boolean =
+  private[painter] def mayPong: Boolean =
     shade.panelBindGroupLayout != null &&
       (panelBindings.length == 0 || panelBindings(0) == null)
+
+  /** Whether this layer ping-pongs on `panel`: some draw of it resolves panel
+    * slot 0 to the previous output, because neither the layer, the panel's
+    * runtime bindings nor (with instances) at least one instance sets it. A
+    * pong layer renders all its draws in one pass, so mixed instances are fine:
+    * those that bind slot 0 read their own texture, the others the previous
+    * output. If every draw sets slot 0, the layer composites onto the live
+    * result like any other non-pong layer.
+    */
+  private[painter] def pongsOn(panel: Panel): Boolean =
+    if !mayPong then false
+    else if panel.runtimeBindings.has(shade.panelNames(0)) then false
+    else
+      val items = instances.items
+      if items.length == 0 then true
+      else
+        var any = false
+        var i = 0
+        while i < items.length && !any do
+          val pbs = items(i).panelBindings
+          if pbs.length == 0 || pbs(0) == null then any = true
+          i += 1
+        any
 
   /** Set [[blendState]] / [[mipSource]] / [[mipTarget]]; returns `this`. */
   def set(
