@@ -41,9 +41,9 @@ def generateGeometry(
   // two extra vertices per segment with fresh widths — a jittery ribbon that
   // `cleanup` then has to thin back out
   val subdivided = line.flatMapWithNeighbours: (prev, curr, next) =>
-    if next.isNull then Arr(curr.copy)
+    if next == null then Arr(curr.copy)
     else
-      val n = next.get
+      val n = next
       Arr(
         LineVertex(curr.pos, curr.width),
         LineVertex(curr.pos.lerp(n.pos, 0.333), randWidth()),

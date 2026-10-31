@@ -68,9 +68,9 @@ private def storage: dom.Storage = dom.window.sessionStorage
 
 private def readJson(key: String): Opt[js.Any] =
   val raw = storage.getItem(key).asInstanceOf[Opt[String]]
-  if raw.isNull then null
+  if raw == null then null
   else
-    try js.JSON.parse(raw.get)
+    try js.JSON.parse(raw)
     catch case _: Throwable => null
 
 private def writeJson(key: String, json: js.Any): Unit =
@@ -136,13 +136,13 @@ object DevCodec:
     def encode(t: Float): js.Any = t.toDouble.asInstanceOf[js.Any]
     def decode(json: js.Any): Opt[Float] =
       val n = asNum(json)
-      if n.notNull then n.get.toFloat else null
+      if n != null then n.toFloat else null
 
   given DevCodec[Int]:
     def encode(t: Int): js.Any = t.asInstanceOf[js.Any]
     def decode(json: js.Any): Opt[Int] =
       val n = asNum(json)
-      if n.notNull then n.get.toInt else null
+      if n != null then n.toInt else null
 
   given DevCodec[Boolean]:
     def encode(t: Boolean): js.Any = t.asInstanceOf[js.Any]
@@ -158,25 +158,25 @@ object DevCodec:
     def encode(t: Vec2): js.Any = Arr(t.x, t.y).asInstanceOf[js.Any]
     def decode(json: js.Any): Opt[Vec2] =
       val a = asNums(json, 2)
-      if a.notNull then Vec2(a.get(0), a.get(1)) else null
+      if a != null then Vec2(a(0), a(1)) else null
 
   given DevCodec[Vec3]:
     def encode(t: Vec3): js.Any = Arr(t.x, t.y, t.z).asInstanceOf[js.Any]
     def decode(json: js.Any): Opt[Vec3] =
       val a = asNums(json, 3)
-      if a.notNull then Vec3(a.get(0), a.get(1), a.get(2)) else null
+      if a != null then Vec3(a(0), a(1), a(2)) else null
 
   given DevCodec[Vec4]:
     def encode(t: Vec4): js.Any = Arr(t.x, t.y, t.z, t.w).asInstanceOf[js.Any]
     def decode(json: js.Any): Opt[Vec4] =
       val a = asNums(json, 4)
-      if a.notNull then Vec4(a.get(0), a.get(1), a.get(2), a.get(3)) else null
+      if a != null then Vec4(a(0), a(1), a(2), a(3)) else null
 
   given DevCodec[Quat]:
     def encode(t: Quat): js.Any = Arr(t.x, t.y, t.z, t.w).asInstanceOf[js.Any]
     def decode(json: js.Any): Opt[Quat] =
       val a = asNums(json, 4)
-      if a.notNull then Quat(a.get(0), a.get(1), a.get(2), a.get(3)) else null
+      if a != null then Quat(a(0), a(1), a(2), a(3)) else null
 
 // ===========================================================================
 // Handles
@@ -215,7 +215,7 @@ object devPreserve:
       val sk = storageKey(key)
       val stored = readJson(sk)
       val restored =
-        if stored.notNull then codec.decode(stored.get).getOr(init) else init
+        if stored != null then codec.decode(stored).getOr(init) else init
       val cell = new DevVar[T](restored)
       val unregister = register(() => writeJson(sk, codec.encode(cell.value)))
       cell.resetFn = () =>
@@ -237,7 +237,7 @@ object devPreserve:
       val initRotV = cam.rotV
 
       val stored = readJson(sk)
-      if stored.notNull then applyCam(cam, stored.get)
+      if stored != null then applyCam(cam, stored)
 
       val unregister = register(() => writeJson(sk, encodeCam(cam)))
       new DevHandle(() =>

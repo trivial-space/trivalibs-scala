@@ -114,7 +114,7 @@ class Painter private[painter] (
 
   /** [[adapter]]'s info; null when the painter was handed a device. */
   val adapterInfo: Opt[GPUAdapterInfo] =
-    if adapter.isNull then null else adapter.get.info
+    if adapter == null then null else adapter.info
 
   /** The surface's format: the default panel format and the `show` target. */
   val preferredFormat: TextureFormat = surface.format
@@ -257,18 +257,18 @@ class Painter private[painter] (
       captureTextures.at(keys(k)).destroy()
       captureTextures.delete(keys(k))
       k += 1
-    if readback.notNull then readback.get.freeStaging()
+    if readback != null then readback.get.freeStaging()
 
   /** Resolves once every pending readback has landed in its [[PixelTarget]];
     * only then is the target complete. Not a step of normal rendering: with
     * nothing to read back it resolves immediately.
     */
   def awaitReadback(): js.Promise[Unit] =
-    if readback.isNull then js.Promise.resolve[Unit](())
+    if readback == null then js.Promise.resolve[Unit](())
     else readback.get.awaitAll()
 
   private[painter] def ensureReadback(): Readback =
-    if readback.isNull then readback = Readback(device, gpu)
+    if readback == null then readback = Readback(device, gpu)
     readback.get
 
   private def createCaptureTexture(
@@ -320,8 +320,8 @@ class Painter private[painter] (
         magFilter = magFilter.toJs,
         minFilter = minFilter.toJs,
         mipmapFilter = mipmapFilter.toJs,
-        addressModeU = addressModeU.orElse(addressMode).toJs,
-        addressModeV = addressModeV.orElse(addressMode).toJs,
+        addressModeU = addressModeU.getOr(addressMode).toJs,
+        addressModeV = addressModeV.getOr(addressMode).toJs,
       ),
     )
 
@@ -447,7 +447,7 @@ class Painter private[painter] (
         val vbl = sd.vertexBufferLayout
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val bgls =
-          if panelBgl.notNull then Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
           else Arr[GPUBindGroupLayout]()
         val pl = layouts.createPipelineLayout(device, bgls)
         Shade[U, P](
@@ -477,7 +477,7 @@ class Painter private[painter] (
         val (bgls, _) = sd.createPipelineLayout(device)
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val allBgls =
-          if panelBgl.notNull then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
           else bgls
         val pl = layouts.createPipelineLayout(device, allBgls)
         Shade[U, P](
@@ -519,7 +519,7 @@ class Painter private[painter] (
         val vbl = sd.vertexBufferLayout
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val bgls =
-          if panelBgl.notNull then Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
           else Arr[GPUBindGroupLayout]()
         val pl = layouts.createPipelineLayout(device, bgls)
         Shade[U, P](
@@ -549,7 +549,7 @@ class Painter private[painter] (
         val (bgls, _) = sd.createPipelineLayout(device)
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val allBgls =
-          if panelBgl.notNull then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
           else bgls
         val pl = layouts.createPipelineLayout(device, allBgls)
         Shade[U, P](
@@ -653,7 +653,7 @@ class Painter private[painter] (
         val module = device.createShaderModule(Obj.literal(code = wgsl))
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val bgls =
-          if panelBgl.notNull then Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
           else Arr[GPUBindGroupLayout]()
         val pl = layouts.createPipelineLayout(device, bgls)
         Shade[U, P](
@@ -688,7 +688,7 @@ class Painter private[painter] (
         val (bgls, _) = sd.createPipelineLayout(device)
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val allBgls =
-          if panelBgl.notNull then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
           else bgls
         val pl = layouts.createPipelineLayout(device, allBgls)
         Shade[U, P](
@@ -731,7 +731,7 @@ class Painter private[painter] (
         val module = device.createShaderModule(Obj.literal(code = wgsl))
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val bgls =
-          if panelBgl.notNull then Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
           else Arr[GPUBindGroupLayout]()
         val pl = layouts.createPipelineLayout(device, bgls)
         Shade[U, P](
@@ -766,7 +766,7 @@ class Painter private[painter] (
         val (bgls, _) = sd.createPipelineLayout(device)
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
         val allBgls =
-          if panelBgl.notNull then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
+          if panelBgl != null then bgls ++ Arr[GPUBindGroupLayout](panelBgl)
           else bgls
         val pl = layouts.createPipelineLayout(device, allBgls)
         Shade[U, P](
@@ -966,8 +966,8 @@ class Painter private[painter] (
     val textureView = surface.currentTexture().createView()
 
     val colorAttachment =
-      if clearColor.notNull then
-        val c = clearColor.get
+      if clearColor != null then
+        val c = clearColor
         Obj.literal(
           view = textureView,
           loadOp = "clear",
@@ -1252,7 +1252,7 @@ class Painter private[painter] (
     var t = 0
     while t < panel.targetCount do
       val attachment =
-        if panel.clearColor.notNull then
+        if panel.clearColor != null then
           val c = panel.clearColor.get
           if msaa then
             Obj.literal(
@@ -1339,9 +1339,9 @@ class Painter private[painter] (
       if hasMipTarget then
         // Mip-targeted layer: render to a specific mip level, no ping-pong.
         // Flush any open shared pass first so its slot-0 writes are visible.
-        if curPass.notNull then
+        if curPass != null then
           curPass.end()
-          queue.submit(Arr(curEncoder.finish()))
+          queue.submit(Arr(curEncoder.get.finish()))
           curPass = null
 
         val mipDstView = panel.views(0).perMip(layer.mipTarget)
@@ -1373,9 +1373,9 @@ class Painter private[painter] (
       else if needsPingPong then
         // Flush any open shared pass so a preceding non-pong blend layer's write
         // to slot 0 is submitted before we sample it here.
-        if curPass.notNull then
+        if curPass != null then
           curPass.end()
-          queue.submit(Arr(curEncoder.finish()))
+          queue.submit(Arr(curEncoder.get.finish()))
           curPass = null
 
         // Ping-pong pass: read slot 0 (auto-injected), write the scratch (slot
@@ -1406,7 +1406,7 @@ class Painter private[painter] (
       else
         // Non-pong layer: lazily open a shared pass on slot 0 and load-compose
         // (blend layers stack on top of the live result, which persists there).
-        if curPass.isNull then
+        if curPass == null then
           curEncoder = device.createCommandEncoder()
           curPass = curEncoder.beginRenderPass(
             Obj.literal(
@@ -1423,9 +1423,9 @@ class Painter private[painter] (
 
       j += 1
 
-    if curPass.notNull then
+    if curPass != null then
       curPass.end()
-      queue.submit(Arr(curEncoder.finish()))
+      queue.submit(Arr(curEncoder.get.finish()))
 
     // Generate mipmaps if configured — but skip when any layer renders into a
     // mip target: those layers build the mip chain by hand, so auto-generation
@@ -1447,7 +1447,7 @@ class Painter private[painter] (
       shape: AnyShape,
       depthTest: Boolean = false,
       multisample: Boolean = false,
-      formats: Arr[TextureFormat] = null,
+      formats: Opt[Arr[TextureFormat]] = null,
       panel: Opt[Panel] = null,
   ): Unit =
     val fmts = if formats != null then formats else Arr(preferredFormat)
@@ -1497,7 +1497,7 @@ class Painter private[painter] (
     if instanceCount == 0 then
       if hasPanelBinds then
         copyToWork(shape.bindings, shape.panelBindings)
-        applyPanelRuntimeBindings(panel, shape.shade)
+        applyPanelRuntimeBindings(panel.get, shape.shade)
         setValueBindGroup(pass, shape.shade, workBindings)
         setPanelBindGroup(pass, shape.shade, workPanelBindings)
       else
@@ -1509,7 +1509,7 @@ class Painter private[painter] (
       while i < instanceCount do
         val inst = shape.instances.items(i)
         copyToWork(shape.bindings, shape.panelBindings)
-        if hasPanelBinds then applyPanelRuntimeBindings(panel, shape.shade)
+        if hasPanelBinds then applyPanelRuntimeBindings(panel.get, shape.shade)
         applyInstanceBindings(inst)
         setValueBindGroup(pass, shape.shade, workBindings)
         setPanelBindGroup(pass, shape.shade, workPanelBindings)
@@ -1525,7 +1525,7 @@ class Painter private[painter] (
       layer: AnyLayer,
       depthTest: Boolean = false,
       multisample: Boolean = false,
-      formats: Arr[TextureFormat] = null,
+      formats: Opt[Arr[TextureFormat]] = null,
       srcView: Opt[GPUTextureView] = null,
       panel: Opt[Panel] = null,
   ): Unit =
@@ -1547,10 +1547,10 @@ class Painter private[painter] (
       if hasPanelBinds then
         // Dynamic path: panel runtime overrides merged per draw — not cached.
         copyToWork(layer.bindings, layer.panelBindings)
-        applyPanelRuntimeBindings(panel, layer.shade)
+        applyPanelRuntimeBindings(panel.get, layer.shade)
         setValueBindGroup(pass, layer.shade, workBindings)
         val effectiveSrcView =
-          if workPanelBindings.length > 0 && workPanelBindings(0).notNull
+          if workPanelBindings.length > 0 && workPanelBindings(0) != null
           then null
           else srcView
         setPanelBindGroup(
@@ -1564,19 +1564,19 @@ class Painter private[painter] (
         // work-buffer copy + GPU bind-group build; a mismatch (or first draw)
         // rebuilds and re-stores, dropping any stale entry.
         val c = layer.cache
-        if c.notNull && panel.notNull
+        if c != null && panel != null
           && c.panelId == panel.panelId && c.epoch == panel.bindEpoch
         then
-          if c.valueGroup.notNull then pass.setBindGroup(0, c.valueGroup)
-          if c.panelGroup.notNull then pass.setBindGroup(1, c.panelGroup)
+          if c.valueGroup != null then pass.setBindGroup(0, c.valueGroup)
+          if c.panelGroup != null then pass.setBindGroup(1, c.panelGroup)
         else
           val vg = buildValueBindGroup(layer.shade, layer.bindings)
           val pg =
             buildPanelBindGroup(layer.shade, layer.panelBindings, srcView)
-          if vg.notNull then pass.setBindGroup(0, vg)
-          if pg.notNull then pass.setBindGroup(1, pg)
+          if vg != null then pass.setBindGroup(0, vg)
+          if pg != null then pass.setBindGroup(1, pg)
           layer.cache =
-            if panel.notNull then
+            if panel != null then
               LayerBindCache(panel.panelId, panel.bindEpoch, vg, pg)
             else null
       pass.draw(3)
@@ -1585,11 +1585,11 @@ class Painter private[painter] (
       while i < instanceCount do
         val inst = layer.instances.items(i)
         copyToWork(layer.bindings, layer.panelBindings)
-        if hasPanelBinds then applyPanelRuntimeBindings(panel, layer.shade)
+        if hasPanelBinds then applyPanelRuntimeBindings(panel.get, layer.shade)
         applyInstanceBindings(inst)
         setValueBindGroup(pass, layer.shade, workBindings)
         val effectiveSrcView =
-          if workPanelBindings.length > 0 && workPanelBindings(0).notNull
+          if workPanelBindings.length > 0 && workPanelBindings(0) != null
           then null
           else srcView
         setPanelBindGroup(
@@ -1639,7 +1639,7 @@ class Painter private[painter] (
             value.asInstanceOf[BufferBinding[?, ?] | GPUSampler]
       else if shade.panelIndices.has(name) then
         val idx = shade.panelIndices.at(name)
-        if idx >= workPanelBindings.length || workPanelBindings(idx).isNull then
+        if idx >= workPanelBindings.length || workPanelBindings(idx) == null then
           while workPanelBindings.length <= idx do workPanelBindings.push(null)
           val pb =
             if value.isInstanceOf[PanelBinding] then
@@ -1657,13 +1657,13 @@ class Painter private[painter] (
       i += 1
     var j = 0
     while j < inst.panelBindings.length do
-      if inst.panelBindings(j).notNull then
+      if inst.panelBindings(j) != null then
         while workPanelBindings.length <= j do workPanelBindings.push(null)
         workPanelBindings(j) = inst.panelBindings(j)
       j += 1
 
   private def hasPanelRuntimeBindings(panel: Opt[Panel]): Boolean =
-    panel.notNull && js.Object
+    panel != null && js.Object
       .keys(panel.runtimeBindings.asInstanceOf[js.Object])
       .asInstanceOf[Arr[String]]
       .length > 0
@@ -1677,7 +1677,7 @@ class Painter private[painter] (
       shade: Shade[?, ?],
       bindings: BindingSlots,
   ): Opt[GPUBindGroup] =
-    if bindings.length > 0 && shade.valueBindGroupLayout.notNull then
+    if bindings.length > 0 && shade.valueBindGroupLayout != null then
       val entries = Arr[js.Dynamic]()
       var i = 0
       while i < bindings.length do
@@ -1695,7 +1695,7 @@ class Painter private[painter] (
       bindings: BindingSlots,
   ): Unit =
     val bg = buildValueBindGroup(shade, bindings)
-    if bg.notNull then pass.setBindGroup(0, bg)
+    if bg != null then pass.setBindGroup(0, bg)
 
   // Build the group-1 (panel-texture) bind group, or null when the layer has no
   // panel layout or no entries.
@@ -1704,15 +1704,15 @@ class Painter private[painter] (
       panelBindings: Arr[Opt[PanelBinding]],
       srcView: Opt[GPUTextureView] = null,
   ): Opt[GPUBindGroup] =
-    if shade.panelBindGroupLayout.notNull then
+    if shade.panelBindGroupLayout != null then
       val entries = Arr[js.Dynamic]()
-      if srcView.notNull then
+      if srcView != null then
         entries.push(Obj.literal(binding = 0, resource = srcView))
-      val startIdx = if srcView.notNull then 1 else 0
+      val startIdx = if srcView != null then 1 else 0
       var k = startIdx
       while k < panelBindings.length do
         val pb = panelBindings(k)
-        if pb.notNull then
+        if pb != null then
           val view =
             if pb.depth then pb.panel.depthSamplingView
             else if pb.mipLevel < 0 then pb.panel.views(pb.index).sampling
@@ -1736,7 +1736,7 @@ class Painter private[painter] (
       srcView: Opt[GPUTextureView] = null,
   ): Unit =
     val pg = buildPanelBindGroup(shade, panelBindings, srcView)
-    if pg.notNull then pass.setBindGroup(1, pg)
+    if pg != null then pass.setBindGroup(1, pg)
 
   // =========================================================================
   // Bind group creation
@@ -1759,7 +1759,7 @@ class Painter private[painter] (
   // =========================================================================
 
   private def blendKeyStr(bs: Opt[BlendState]): String =
-    if bs.isNull then "n"
+    if bs == null then "n"
     else
       val c = bs.color
       val a = bs.alpha
@@ -1782,7 +1782,7 @@ class Painter private[painter] (
     // Only strip topologies take a stripIndexFormat, and they *must* have one
     // to be drawn indexed — the primitive restart index depends on it.
     val stripIndexFormat: Opt[String] =
-      if indexFormat.notNull &&
+      if indexFormat != null &&
         (topology == PrimitiveTopology.TriangleStrip ||
           topology == PrimitiveTopology.LineStrip)
       then indexFormat
@@ -1790,8 +1790,8 @@ class Painter private[painter] (
     // Only ever "", "2" or "4" — no separator needed, and it keeps the key
     // this builds on every draw call from growing.
     val stripKey =
-      if stripIndexFormat.isNull then ""
-      else if stripIndexFormat.get == "uint32" then "4"
+      if stripIndexFormat == null then ""
+      else if stripIndexFormat == "uint32" then "4"
       else "2"
     val depthKey =
       if !depthTest then "n" else if depthAlways then "a" else "l"
@@ -1805,13 +1805,13 @@ class Painter private[painter] (
       var ti = 0
       while ti < formats.length do
         val target =
-          if blendState.isNull then Obj.literal(format = formats(ti).toJs)
+          if blendState == null then Obj.literal(format = formats(ti).toJs)
           else Obj.literal(format = formats(ti).toJs, blend = blendState)
         targets.push(target)
         ti += 1
 
       val vertexDescriptor =
-        if shade.vertexBufferLayout.notNull then
+        if shade.vertexBufferLayout != null then
           Obj.literal(
             module = shade.shaderModule,
             entryPoint = "vs_main",
@@ -1837,8 +1837,8 @@ class Painter private[painter] (
           frontFace = frontFace.toJs,
         ),
       )
-      if stripIndexFormat.notNull then
-        desc.primitive.stripIndexFormat = stripIndexFormat.get
+      if stripIndexFormat != null then
+        desc.primitive.stripIndexFormat = stripIndexFormat
       if depthTest then
         desc.depthStencil = Obj.literal(
           format = "depth24plus",
@@ -1879,7 +1879,7 @@ class Painter private[painter] (
     )
     val bundle = panel.views(0)
     var group = bundle.blitGroup
-    if group.isNull then
+    if group == null then
       group = device.createBindGroup(
         Obj.literal(
           layout = blitBindGroupLayout,
@@ -1891,7 +1891,7 @@ class Painter private[painter] (
       )
       bundle.blitGroup = group
     pass.setPipeline(blitPipelineFor(dstFormat))
-    pass.setBindGroup(0, group.get)
+    pass.setBindGroup(0, group)
     pass.draw(3)
     pass.end()
 
@@ -1983,7 +1983,7 @@ class Painter private[painter] (
       formats: Arr[TextureFormat],
   ): Unit =
     var group = panel.sourceGroup
-    if group.isNull then
+    if group == null then
       if panel.sourcePixelFormat.asString == TextureFormat.Rgba32Float.asString &&
         !device.features.has("float32-filterable")
       then
@@ -2014,7 +2014,7 @@ class Painter private[painter] (
         depthAlways = true,
       ),
     )
-    pass.setBindGroup(0, group.get)
+    pass.setBindGroup(0, group)
     pass.draw(3)
 
   // =========================================================================
@@ -2155,7 +2155,7 @@ object Painter:
         js.Error("WebGPU is not supported"),
       )
     else
-      val gpu = maybeGpu.safe
+      val gpu = maybeGpu.get
       // Builds its `CanvasSurface` itself rather than going through the
       // union-typed `init`, so a browser bundle that only uses this overload
       // never links `CaptureSurface`.
@@ -2248,11 +2248,11 @@ object Painter:
       CaptureSurface(target.asInstanceOf[PixelTarget])
     else
       val canvas = target.asInstanceOf[HTMLCanvasElement]
-      if gpu.isNull then CanvasSurface(canvas)
+      if gpu == null then CanvasSurface(canvas)
       else
         CanvasSurface(
           canvas,
-          format = TextureFormat.of(gpu.get.getPreferredCanvasFormat()),
+          format = TextureFormat.of(gpu.getPreferredCanvasFormat()),
         )
 
   // `initializeSurface()` hands `this` to the surface, so it runs only after

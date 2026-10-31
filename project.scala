@@ -3,6 +3,7 @@
 //> using option -Wconf:msg=differs.only.in.case:s
 //> using option -feature
 //> using option -language:implicitConversions
+//> using option -Yexplicit-nulls
 
 //> using jsVersion 1.22.0
 //> using jsMode full

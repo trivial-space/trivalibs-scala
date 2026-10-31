@@ -6,6 +6,7 @@ import trivalibs.graphics.shader.FragOut
 import trivalibs.graphics.shader.FragmentUniform
 import trivalibs.graphics.shader.VertexUniform
 import trivalibs.graphics.shader.given
+import trivalibs.utils.js.get
 
 class WgslFnTest extends FunSuite:
 
@@ -290,7 +291,7 @@ class WgslFnTest extends FunSuite:
   def fnNames(helpers: String): Seq[String] =
     "fn ([a-zA-Z_][a-zA-Z0-9_]*)\\(".r
       .findAllMatchIn(helpers)
-      .map(_.group(1))
+      .map(_.group(1).get)
       .toSeq
 
   test("auto-register: fn called in program.frag without program.fn(...)"):

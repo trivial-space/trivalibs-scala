@@ -60,10 +60,10 @@ class Line2dTest extends FunSuite:
 
   test("Line.getOpt is null out of bounds"):
     val line = Line.fromPoints(1.0, Arr(Vec2(0.0, 0.0), Vec2(1.0, 0.0)))
-    assert(line.getOpt(0).notNull)
-    assert(line.getOpt(1).notNull)
-    assert(line.getOpt(2).isNull)
-    assert(line.getOpt(-1).isNull)
+    assert(line.getOpt(0) != null)
+    assert(line.getOpt(1) != null)
+    assert(line.getOpt(2) == null)
+    assert(line.getOpt(-1) == null)
 
   // -------------------------------------------------------------------------
   // cleanup
@@ -223,7 +223,7 @@ class Line2dTest extends FunSuite:
     // top and bottom outline each get one vertex per input vertex plus a
     // duplicated cap vertex at each end => 2 * (3 + 2) = 10
     assertEquals(geom.vertices.length, 10)
-    assert(geom.indices.notNull)
+    assert(geom.indices != null)
     // the strip walks both outlines in lockstep: 2 indices per iteration
     assertEquals(geom.indices.asInstanceOf[Uint16Array].length, 10)
 

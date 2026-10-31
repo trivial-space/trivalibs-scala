@@ -458,9 +458,9 @@ private def calcVertexNormal[T: Position](
       if mesh.faceData(ref.faceIndex).section == section then
         val n = mesh.faceData(ref.faceIndex).normal
         if n != null then
-          sx += n.get.x
-          sy += n.get.y
-          sz += n.get.z
+          sx += n.x
+          sy += n.y
+          sz += n.z
       i += 1
   val len = math.sqrt(sx * sx + sy * sy + sz * sz)
   if len < 1e-10 then Vec3(0, 0, 0)

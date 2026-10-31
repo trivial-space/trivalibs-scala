@@ -28,7 +28,7 @@ trait SceneObject[T]:
     def worldTransform: Transform =
       val t = obj.transform
       val p = obj.parent
-      if p.notNull then p.get.worldTransform * t
+      if p != null then p.worldTransform * t
       else t
 
     def modelMat: Mat4 = obj.worldTransform.matrix

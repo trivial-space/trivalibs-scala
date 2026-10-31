@@ -27,7 +27,7 @@ class Animator(
       if time - lastFpsLog >= 1000.0 then
         log(fps.toFixed(1) + " FPS")
         lastFpsLog = time
-        if onFpsCallback.notNull then onFpsCallback(fps)
+        if onFpsCallback != null then onFpsCallback.get(fps)
       frameCount = 0
       lastFpsTime = time
 

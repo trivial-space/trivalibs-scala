@@ -1,42 +1,85 @@
 package trivalibs.utils.js
 
-import scala.annotation.targetName
 import scala.scalajs.js
 
 type JS = js.Object
 
-// === Maybe[T] — js.undefined-based optional (for "not provided" semantics) ===
+// === Opt / Maybe — optional values ===
+//
+// Both share one API (`get`, `getOr`, `orElse`) that exists only on values
+// whose static type is optional. That needs `-Yexplicit-nulls`, which trivalibs
+// and every consumer compile with: without it every reference type is nullable,
+// and the `Opt` operations would shadow same-named `js.Dynamic` and
+// `Selectable` members again.
 
+/** `js.undefined`-based optional, for "not provided" semantics (optional
+  * parameters, absent JS properties). Empty is [[Maybe.Not]]; `null` is a
+  * regular value.
+  *
+  * Operations: `get` (unchecked unwrap), `getOr(default)`,
+  * `orElse(alternative)`. On `Maybe[Opt[A]]` (`A | Null | Unit`) they act on
+  * the undefined layer: `x.getOr(null)` yields the `Opt[A]`. Test for empty
+  * with `js.isUndefined(x)`.
+  */
 type Maybe[T] = js.UndefOr[T]
 object Maybe:
   inline def Not = js.undefined
 
+/** `value` when `condition` holds, else [[Maybe.Not]]. */
 inline def maybe[A](condition: Boolean, value: A): Maybe[A] =
   if condition then value else Maybe.Not
 
-extension [A](m: Maybe[A])
-  inline def orElse(default: => A): A =
-    if js.isUndefined(m.asInstanceOf[js.Any]) then default
-    else m.asInstanceOf[A]
-  inline def orMaybe(default: => Any): Maybe[A] =
-    if js.isUndefined(m.asInstanceOf[js.Any]) then
-      default.asInstanceOf[Maybe[A]]
-    else m
-  inline def safe: A =
-    m.asInstanceOf[A]
-
+/** `null`-based optional, for nullable values (fields, lookups, JS returns).
+  * Empty is `null`.
+  *
+  * Operations: `get` (unchecked unwrap), `getOr(default)`,
+  * `orElse(alternative)`. Test for empty with plain `x == null` / `x != null`:
+  * on locals and parameters that narrows `x` to `A`, so no `.get` is needed.
+  * Fields don't narrow; unwrap them with `.get`. Never use the stdlib `.nn`,
+  * which throws a Java `NullPointerException`.
+  */
 type Opt[+A] = A | Null
 
-extension [A](opt: Opt[A])
-  @targetName("opt_isNull")
-  inline def isNull: Boolean = opt == null
-  @targetName("opt_notNull")
-  inline def notNull: Boolean = opt != null
-  @targetName("opt_getOr")
-  inline def getOr(default: => A): A =
-    if opt != null then opt.asInstanceOf[A] else default
-  @targetName("opt_get")
-  inline def get: A = opt.asInstanceOf[A]
+/** Evidence that `O` is an optional type with element type `Elem`: `A | Null`
+  * ([[Opt]]) or `A | Unit` ([[Maybe]]). Guards the shared optional operations,
+  * so they don't apply to non-optional values and never shadow `js.Dynamic` or
+  * `Selectable` members. Where both match (`A | Null | Unit`), `Maybe` wins.
+  * Erased: the instances are `null` and never read.
+  *
+  * `Elem` is a type member rather than a type parameter so that an expected
+  * result type (e.g. `js.Any` in `Obj.literal(x = opt.get)`) can't constrain it
+  * before the instance is found.
+  */
+sealed trait Optional[O]:
+  type Elem
+
+type OptionalOf[O, A] = Optional[O] { type Elem = A }
+
+trait OptionalLowPriority:
+  inline given nullable: [A] => OptionalOf[A | Null, A] =
+    null.asInstanceOf[OptionalOf[A | Null, A]]
+
+object Optional extends OptionalLowPriority:
+  inline given undefinable: [A] => OptionalOf[A | Unit, A] =
+    null.asInstanceOf[OptionalOf[A | Unit, A]]
+
+  /** Empty check for an optional `O`, picked at compile time. */
+  inline def isEmpty[O](x: O): Boolean =
+    compiletime.summonFrom:
+      case _: (Unit <:< O) => js.isUndefined(x)
+      case _ => x == null
+
+extension [O](x: O)(using ev: Optional[O])
+  /** Unchecked unwrap: a cast, never throws. */
+  inline def get: ev.Elem = x.asInstanceOf[ev.Elem]
+
+  /** The value, or `default` when empty. */
+  inline def getOr(default: => ev.Elem): ev.Elem =
+    if Optional.isEmpty(x) then default else x.asInstanceOf[ev.Elem]
+
+  /** This optional, or `alternative` when empty. */
+  inline def orElse(alternative: => O): O =
+    if Optional.isEmpty(x) then alternative else x
 
 object Obj:
   val literal = js.Dynamic.literal
@@ -211,7 +254,8 @@ extension [A](promise: js.Promise[A | Null])
       if value == null then throw jsError(message)
       else value.asInstanceOf[A]
 
-  inline def orElse(default: => A): js.Promise[A] =
+  /** Resolves to `default` when the promise resolves to `null`. */
+  inline def getOr(default: => A): js.Promise[A] =
     promise.`then`[A]: value =>
       (value: Opt[A]).getOr(default)
 

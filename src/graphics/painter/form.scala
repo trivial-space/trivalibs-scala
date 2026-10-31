@@ -98,7 +98,7 @@ class Form private[painter] (private[painter] val painter: Painter):
       var i = 0
       while i < geos.length do
         val idx = geos(i).indices
-        if idx.notNull && idx.isInstanceOf[Uint32Array] then use32 = true
+        if idx != null && idx.isInstanceOf[Uint32Array] then use32 = true
         i += 1
       i = 0
       while i < geos.length do
@@ -124,7 +124,7 @@ class Form private[painter] (private[painter] val painter: Painter):
     var i = 0
     while i < activeBuffers do
       val b = buffers(i)
-      if format.isNull && b.indexCount > 0 then format = b.indexFormat
+      if format == null && b.indexCount > 0 then format = b.indexFormat
       i += 1
     indexFormat = format
 
@@ -137,7 +137,7 @@ class Form private[painter] (private[painter] val painter: Painter):
     while buffers.length <= index do buffers.push(FormBuffers())
     val b = buffers(index)
     uploadVertices(b, verts)
-    if indices.notNull then uploadIndices(b, indices, widenTo32)
+    if indices != null then uploadIndices(b, indices, widenTo32)
     else
       b.indexCount = 0
       b.indexBufferCurrentSize = 0
@@ -149,8 +149,8 @@ class Form private[painter] (private[painter] val painter: Painter):
     val data = verts.arrayBuffer
     val size = data.byteLength
     val padded = paddedBufferSize(size)
-    if b.vertexBuffer.isNull || b.vertexBufferMaxSize < padded then
-      if b.vertexBuffer.notNull then b.vertexBuffer.get.destroy()
+    if b.vertexBuffer == null || b.vertexBufferMaxSize < padded then
+      if b.vertexBuffer != null then b.vertexBuffer.get.destroy()
       b.vertexBuffer = painter.device.createBuffer(
         Obj.literal(
           size = padded,
@@ -167,32 +167,32 @@ class Form private[painter] (private[painter] val painter: Painter):
       raw: Uint16Array | Uint32Array,
       widenTo32: Boolean,
   ): Unit =
-    var data: ArrayBuffer = null
     var count = 0
-    if raw.isInstanceOf[Uint16Array] && widenTo32 then
-      val u16 = raw.asInstanceOf[Uint16Array]
-      val u32 = new Uint32Array(u16.length)
-      var i = 0
-      while i < u16.length do
-        u32(i) = u16(i)
-        i += 1
-      data = u32.buffer
-      count = u32.length
-      b.indexFormat = "uint32"
-    else if raw.isInstanceOf[Uint16Array] then
-      val u16 = raw.asInstanceOf[Uint16Array]
-      data = u16.buffer
-      count = u16.length
-      b.indexFormat = "uint16"
-    else
-      val u32 = raw.asInstanceOf[Uint32Array]
-      data = u32.buffer
-      count = u32.length
-      b.indexFormat = "uint32"
+    val data: ArrayBuffer =
+      if raw.isInstanceOf[Uint16Array] && widenTo32 then
+        val u16 = raw.asInstanceOf[Uint16Array]
+        val u32 = new Uint32Array(u16.length)
+        var i = 0
+        while i < u16.length do
+          u32(i) = u16(i)
+          i += 1
+        count = u32.length
+        b.indexFormat = "uint32"
+        u32.buffer
+      else if raw.isInstanceOf[Uint16Array] then
+        val u16 = raw.asInstanceOf[Uint16Array]
+        count = u16.length
+        b.indexFormat = "uint16"
+        u16.buffer
+      else
+        val u32 = raw.asInstanceOf[Uint32Array]
+        count = u32.length
+        b.indexFormat = "uint32"
+        u32.buffer
     val size = data.byteLength
     val padded = paddedBufferSize(size)
-    if b.indexBuffer.isNull || b.indexBufferMaxSize < padded then
-      if b.indexBuffer.notNull then b.indexBuffer.get.destroy()
+    if b.indexBuffer == null || b.indexBufferMaxSize < padded then
+      if b.indexBuffer != null then b.indexBuffer.get.destroy()
       b.indexBuffer = painter.device.createBuffer(
         Obj.literal(
           size = padded,

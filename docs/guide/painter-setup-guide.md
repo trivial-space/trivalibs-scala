@@ -39,7 +39,7 @@ The extended `init` overload takes the `GPU` from the caller and accepts the
 options of §2:
 
 ```scala
-val gpu = WebGPU.getGPU().safe
+val gpu = WebGPU.getGPU().get
 Painter
   .init(canvas, gpu, powerPreference = PowerPreference.HighPerformance)
   .map: p =>

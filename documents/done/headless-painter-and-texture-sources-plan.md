@@ -1701,9 +1701,11 @@ Implemented together, in one change, because M1.1's readback is built on M1.0b's
   by name (§3.3, §7).
 - **Library trap:** `.get(x)` on a `js.Dynamic` resolves to trivalibs' `Opt.get`
   extension, because every value is an `Opt[A]`. It then calls the result as a
-  function: `(0, this.l1)(target) is not a function`. It is worked around here
-  with a typed facade (`WeakIntMap`). The fix at the cause is planned in
-  [opt-maybe-extension-shadowing-plan.md](../opt-maybe-extension-shadowing-plan.md).
+  function: `(0, this.l1)(target) is not a function`. `Readback` uses a typed
+  facade (`WeakIntMap`), the house style for JS objects anyway. The cause is
+  fixed in
+  [opt-maybe-extension-shadowing-plan.md](opt-maybe-extension-shadowing-plan.md):
+  the optional operations now exist only on values typed `Opt` / `Maybe`.
 - Shade creation logs every generated WGSL to the console (`log(wgsl)`, which
   predates this change). That is noisy in offline driver output. Leave it, or
   gate it, later.

@@ -32,6 +32,7 @@ import scala.scalajs.js.typedarray.Int32Array
 import trivalibs.graphics.math.cpu.Vec2
 import trivalibs.graphics.math.cpu.Vec3
 import trivalibs.graphics.math.cpu.Vec4
+import trivalibs.utils.js.*
 import trivalibs.utils.numbers.NumExt.given
 
 /** Extended noise (psrdnoise), 2D / 3D, on the CPU — same names, parameters,
@@ -244,7 +245,7 @@ object Extended:
         cosT: Float64Array,
         sinT: Float64Array,
         inline gradient: Boolean,
-        out: Vec3,
+        out: Opt[Vec3],
     ): Double =
       val c = cosT(h)
       val s = sinT(h)
@@ -257,8 +258,8 @@ object Extended:
       inline if gradient then
         val w3 = w2 * w
         val dw = -8.0 * w3 * gdotx
-        out.y += w4 * gx + dw * x
-        out.z += w4 * gy + dw * y
+        out.get.y += w4 * gx + dw * x
+        out.get.z += w4 * gy + dw * y
       w4 * gdotx
 
     private inline def impl2(
@@ -270,7 +271,7 @@ object Extended:
         so: Int,
         inline isSeeded: Boolean,
         inline gradient: Boolean,
-        out: Vec3,
+        out: Opt[Vec3],
     ): Double =
       val uvx = x + y * 0.5
       val uvy = y
@@ -341,15 +342,15 @@ object Extended:
       val cosT = NoiseTables.ext2Cos
       val sinT = NoiseTables.ext2Sin
       inline if gradient then
-        out.y = 0.0
-        out.z = 0.0
+        out.get.y = 0.0
+        out.get.z = 0.0
       val n = corner2(h0, x0x, x0y, ca, sa, cosT, sinT, gradient, out) +
         corner2(h1, x1x, x1y, ca, sa, cosT, sinT, gradient, out) +
         corner2(h2, x2x, x2y, ca, sa, cosT, sinT, gradient, out)
       inline if gradient then
-        out.x = 10.9 * n
-        out.y *= 10.9
-        out.z *= 10.9
+        out.get.x = 10.9 * n
+        out.get.y *= 10.9
+        out.get.z *= 10.9
       10.9 * n
 
     def noiseValue2d(x: Double, y: Double, periodX: Double, periodY: Double, alpha: Double): Double =
@@ -423,7 +424,7 @@ object Extended:
         tqy: Float64Array,
         tqz: Float64Array,
         inline gradient: Boolean,
-        out: Vec4,
+        out: Opt[Vec4],
     ): Double =
       var gx = tpx(h)
       var gy = tpy(h)
@@ -438,9 +439,9 @@ object Extended:
       val gdotx = gx * x + gy * y + gz * z
       inline if gradient then
         val dw = -6.0 * w2 * gdotx
-        out.y += w3 * gx + dw * x
-        out.z += w3 * gy + dw * y
-        out.w += w3 * gz + dw * z
+        out.get.y += w3 * gx + dw * x
+        out.get.z += w3 * gy + dw * y
+        out.get.w += w3 * gz + dw * z
       w3 * gdotx
 
     private inline def impl3(
@@ -454,7 +455,7 @@ object Extended:
         so: Int,
         inline isSeeded: Boolean,
         inline gradient: Boolean,
-        out: Vec4,
+        out: Opt[Vec4],
     ): Double =
       // uvw = M * x, M = mat3(0,1,1, 1,0,1, 1,1,0)
       val uvwX = y + z
@@ -579,19 +580,19 @@ object Extended:
       val tqy = NoiseTables.ext3Qy
       val tqz = NoiseTables.ext3Qz
       inline if gradient then
-        out.y = 0.0
-        out.z = 0.0
-        out.w = 0.0
+        out.get.y = 0.0
+        out.get.z = 0.0
+        out.get.w = 0.0
       val n =
         corner3(h0, x0x, x0y, x0z, rotating, ca, sa, tpx, tpy, tpz, tqx, tqy, tqz, gradient, out) +
           corner3(h1, x1x, x1y, x1z, rotating, ca, sa, tpx, tpy, tpz, tqx, tqy, tqz, gradient, out) +
           corner3(h2, x2x, x2y, x2z, rotating, ca, sa, tpx, tpy, tpz, tqx, tqy, tqz, gradient, out) +
           corner3(h3, x3x, x3y, x3z, rotating, ca, sa, tpx, tpy, tpz, tqx, tqy, tqz, gradient, out)
       inline if gradient then
-        out.x = 39.5 * n
-        out.y *= 39.5
-        out.z *= 39.5
-        out.w *= 39.5
+        out.get.x = 39.5 * n
+        out.get.y *= 39.5
+        out.get.z *= 39.5
+        out.get.w *= 39.5
       39.5 * n
 
     def noiseValue3d(

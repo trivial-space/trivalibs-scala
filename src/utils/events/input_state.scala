@@ -78,7 +78,7 @@ class InputState(
     maxPointers: Int = 4,
 ):
   private inline def fireActivity(): Unit =
-    if !js.isUndefined(onActivity.asInstanceOf[js.Any]) then onActivity.safe()
+    if !js.isUndefined(onActivity.asInstanceOf[js.Any]) then onActivity.get()
 
   /** code -> timestamp (ms) when the key was pressed. */
   val keysDown: Dict[Double] = Dict()
@@ -115,7 +115,7 @@ class InputState(
   private def freeSlot(): Opt[Pointer] =
     var i = 0
     while i < slots.length do
-      if slots(i).id.isNull then return slots(i)
+      if slots(i).id == null then return slots(i)
       i += 1
     null
 
@@ -123,14 +123,14 @@ class InputState(
     var i = 0
     while i < order.length do
       val p = order(i)
-      if p.id.notNull && p.id.get == id then return p
+      if p.id != null && p.id.get == id then return p
       i += 1
     null
 
   private def removePointer(id: Double): Unit =
     val p = slotById(id)
-    if p.notNull then
-      val pt = p.get
+    if p != null then
+      val pt = p
       pt.id = null
       val idx = order.indexOf(pt)
       if idx >= 0 then order.splice(idx, 1)
@@ -159,8 +159,8 @@ class InputState(
           keyTarget.asInstanceOf[dom.HTMLElement].focus()
         buttonsDown.set(button.key, js.Date.now())
         val slot = freeSlot()
-        if slot.notNull then
-          val pt = slot.get
+        if slot != null then
+          val pt = slot
           pt.id = id
           pt.button = button
           pt.downSince = js.Date.now()
@@ -176,8 +176,8 @@ class InputState(
       ,
       onMove = (id, x, y) =>
         val p = slotById(id)
-        if p.notNull then
-          val pt = p.get
+        if p != null then
+          val pt = p
           pt.x = x
           pt.y = y
           if order.length > 0 && (order(0) eq pt) then
@@ -238,7 +238,7 @@ class InputState(
     */
   def pointerDownMs(i: Int, now: Double = js.Date.now()): Double =
     val p = pointer(i)
-    if p.notNull then now - p.get.downSince else 0.0
+    if p != null then now - p.downSince else 0.0
 
   /** X of the main (first) pointer, or its last position when none is down. */
   def pointerX: Double = if order.length > 0 then order(0).x else lastMainX

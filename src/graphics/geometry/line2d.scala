@@ -206,11 +206,11 @@ class Line[T](
       angleThreshold: Double = 0.0,
   )(using Lerp[T]): Line[T] =
     flatMapWithNeighbours: (prev, curr, next) =>
-      if prev.isNull || next.isNull then Arr(curr.copy)
+      if prev == null || next == null then Arr(curr.copy)
       else
-        val p = prev.get
+        val p = prev
         if p.len < minDist || curr.len < minDist then Arr(curr.copy)
-        else curr.smoothEdge(p, next.get, ratio, angleThreshold)
+        else curr.smoothEdge(p, next, ratio, angleThreshold)
 
   /** Drop vertices that carry no shape information: those closer together than
     * `avgWidth * minLenWidRatio` (but at least `minLenFloor`), and those whose
@@ -234,10 +234,10 @@ class Line[T](
   )(using Lerp[T]): Line[T] =
     var travelled = 0.0
     flatMapWithNeighbours: (prev, curr, next) =>
-      if prev.isNull || next.isNull then Arr(curr.copy)
+      if prev == null || next == null then Arr(curr.copy)
       else
-        val p = prev.get
-        val nx = next.get
+        val p = prev
+        val nx = next
         val len = p.len + curr.len + travelled
         val avgWidth = (p.width + curr.width * 2.0 + nx.width) / 4.0
         val minLen = (avgWidth * minLenWidRatio).max(minLenFloor)
@@ -329,8 +329,8 @@ class Line[T](
     while i < verts.length do
       val v = verts(i)
       line.addVertRaw(v.copy)
-      if prev.notNull then
-        val p = prev.get
+      if prev != null then
+        val p = prev
         if v.dir.dot(p.dir) <= cosThreshold then
           offset += line.totalLength
           // the fragment ends here, so its last vertex points backwards along
@@ -803,9 +803,9 @@ object Line:
           topLine.add(v.pos, v.width, Vec2(lineLength, 0.5))
           bottomLine.add(v.pos, v.width, Vec2(lineLength, 0.5))
 
-          if prevDirection.notNull then
+          if prevDirection != null then
             // extend the cap so it meets the preceding fragment's end
-            val prevDir = prevDirection.get
+            val prevDir = prevDirection
             val c = halfWidth / (prevDir * -1.0 + v.dir).normalize.dot(v.dir)
             val a = (c * c - halfWidth * halfWidth).sqrt
             if a > 0.001 then
@@ -816,8 +816,8 @@ object Line:
                 top = top + v.dir * a
                 bottom = bottom + v.dir * -a
 
-        if !hasNext && nextDirection.notNull then
-          val nextDir = nextDirection.get
+        if !hasNext && nextDirection != null then
+          val nextDir = nextDirection
           val c = halfWidth / (v.dir * -1.0 + nextDir).normalize.dot(nextDir)
           val a = (c * c - halfWidth * halfWidth).sqrt
           if a > 0.001 then
@@ -941,7 +941,7 @@ object Line:
         foldTreatment: FoldTreatment = FoldTreatment.Leave,
     ): Arr[BufferedGeometry[LineAttribsBuffer]] =
       var total = 0.0
-      if totalLength.notNull then total = totalLength.get
+      if totalLength != null then total = totalLength
       else
         var i = 0
         while i < lines.length do

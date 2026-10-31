@@ -90,7 +90,7 @@ final class DragGesture private[events] (
     if s < MinGlideCutoff then MinGlideCutoff else s
 
   /** Whether a drag-eligible pointer is currently down. */
-  def dragging: Boolean = drivingPointer(pointersOf()).notNull
+  def dragging: Boolean = drivingPointer(pointersOf()) != null
 
   /** Whether [[delta]] is currently coming from the post-release glide rather
     * than from a pointer. Always false without a `glideHalfLife`.
@@ -109,7 +109,7 @@ final class DragGesture private[events] (
     */
   def update(tpf: Double): Unit =
     val d = drivingPointer(pointersOf())
-    if d.isNull then
+    if d == null then
       lastId = null
       if glides && (velX * velX + velY * velY).sqrt >= cutoff then
         val f = 0.5.pow(tpf / glideHalfLife)
@@ -126,9 +126,9 @@ final class DragGesture private[events] (
         _dy = 0.0
     else
       _gliding = false
-      val p = d.get
+      val p = d
       val sameDriver =
-        lastId.notNull && p.id.notNull && lastId.get == p.id.get
+        lastId != null && p.id != null && lastId.get == p.id.get
       if sameDriver then
         _dx = p.x - lastX
         _dy = p.y - lastY
@@ -140,7 +140,7 @@ final class DragGesture private[events] (
       else
         // Reseed. A hand-off (lastId still set) keeps the velocity so the
         // glide survives it; a fresh press drops it, so a tap stops the glide.
-        if lastId.isNull then
+        if lastId == null then
           velX = 0.0
           velY = 0.0
         _dx = 0.0
@@ -187,16 +187,16 @@ final class HoldGesture private[events] (
     */
   def update(tpf: Double): Unit =
     val d = drivingPointer(pointersOf())
-    if d.isNull then
+    if d == null then
       lastId = null
       heldMs = 0.0
       strayed = false
       activated = false
       _holding = false
     else
-      val p = d.get
+      val p = d
       val pid = p.id
-      val sameDriver = lastId.notNull && pid.notNull && lastId.get == pid.get
+      val sameDriver = lastId != null && pid != null && lastId.get == pid
       if !sameDriver then
         // fresh press or hand-off: restart the hold timer
         lastId = pid

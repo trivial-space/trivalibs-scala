@@ -172,7 +172,7 @@ class Panel private[painter] (val painter: Painter):
     */
   private[painter] def sourceOnly: Boolean =
     hasSource && shapes.length == 0 && layers.length == 0 &&
-      sourceBlend.isNull && !followSurface
+      sourceBlend == null && !followSurface
 
   /** Direct path: a source-only panel at the source's own size and format. The
     * pixels live in slot 0 and nothing is rendered. Any other size or format,
@@ -230,8 +230,8 @@ class Panel private[painter] (val painter: Painter):
   // single-sample resolve texture). Shared by `ensureSize` and the lazy upgrade
   // in `depthSamplingView`.
   private def allocDepth(): Unit =
-    if depthTexture.notNull then depthTexture.get.destroy()
-    if resolvedDepthTexture.notNull then resolvedDepthTexture.get.destroy()
+    if depthTexture != null then depthTexture.get.destroy()
+    if resolvedDepthTexture != null then resolvedDepthTexture.get.destroy()
     val depthUsage =
       if depthSamplable then
         GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
@@ -269,7 +269,7 @@ class Panel private[painter] (val painter: Painter):
   // a multisample panel that also allocates the single-sample resolve texture
   // (filled by `Painter.resolvePanelDepth` each frame) and we hand that back.
   private[painter] def depthSamplingView: GPUTextureView =
-    if !depthSamplable && depthTexture.notNull then
+    if !depthSamplable && depthTexture != null then
       depthSamplable = true
       allocDepth()
     if depthResolvePending then resolvedDepthView.get
@@ -329,30 +329,30 @@ class Panel private[painter] (val painter: Painter):
     // panel's clear color.
     clearColor.foreach: v =>
       this.clearColor =
-        if v.isNull then null
-        else Vec4(v.get.x, v.get.y, v.get.z, v.get.w)
+        if v == null then null
+        else Vec4(v.x, v.y, v.z, v.w)
     depthTest.foreach(v => this.depthTest = v)
     multisample.foreach(v => this.multisample = v)
     mips.foreach(v => if v then this.mipLevels = 0)
     mipLevels.foreach(v => if v > 0 then this.mipLevels = v)
-    formats.orMaybe(format.map(f => Arr(f))).foreach(v => this.formats = v)
+    formats.orElse(format.map(f => Arr(f))).foreach(v => this.formats = v)
     shapes
-      .orMaybe(shape.map(s => Arr(s.asInstanceOf[AnyShape])))
+      .orElse(shape.map(s => Arr(s)))
       .foreach(v => this.shapes = v.asInstanceOf[Arr[AnyShape]])
     layers
-      .orMaybe(layer.map(l => Arr(l)))
+      .orElse(layer.map(l => Arr(l)))
       .foreach(v => this.layers = v.asInstanceOf[Arr[AnyLayer]])
     sourceBlend.foreach(v => this.sourceBlend = v)
     followSurface.foreach(v => this.followSurface = v)
     flipY.foreach(v => this.flipY = v)
     premultipliedAlpha.foreach(v => this.premultipliedAlpha = v)
     source.foreach: v =>
-      if v.isNull then
+      if v == null then
         // Keep the format the pixels already have.
         if hasSource && this.formats.length == 0 then
           this.formats = Arr(sourceDefaultFormat)
         hasSource = false
-      else noteSource(v.get)
+      else noteSource(v)
     // MRT panels can't host auto-pong layers: ping-pong is single-target by
     // design (one color attachment), so it can't post-process multiple render
     // targets. Compose a chain of single-format panels instead. Checked here —
@@ -369,8 +369,8 @@ class Panel private[painter] (val painter: Painter):
       )
     if allocationKey != allocationBefore then needsRealloc = true
     source.foreach: v =>
-      if v.isNull then releaseSource()
-      else uploadSource(v.get)
+      if v == null then releaseSource()
+      else uploadSource(v)
     // A source-only panel's size doesn't depend on the surface, so its content
     // is complete here instead of on a paint that may never come.
     if sourceOnly then
@@ -675,7 +675,7 @@ class Panel private[painter] (val painter: Painter):
     if sourceInSlot0 && (!direct || allocationStale(w, h)) then
       adoptSlot0AsSource()
     if allocationStale(w, h) then reallocate(w, h)
-    if direct && !sourceInSlot0 && sourceTexture.notNull then
+    if direct && !sourceInSlot0 && sourceTexture != null then
       restoreSourceToSlot0()
 
   private def reallocate(w: Int, h: Int): Unit =
@@ -689,7 +689,7 @@ class Panel private[painter] (val painter: Painter):
       msaaTextures(d).destroy()
       d += 1
     // Depth textures are (re)allocated by `allocDepth()` below.
-    if !depthTest && depthTexture.notNull then
+    if !depthTest && depthTexture != null then
       depthTexture.get.destroy()
       depthTexture = null
       depthAttachmentView = null
@@ -801,9 +801,9 @@ class Panel private[painter] (val painter: Painter):
       // Into the source texture; paint draws it into slot 0.
       sourceInSlot0 = false
       val current = sourceTexture
-      if current.isNull || current.get.width != sourceWidth ||
-        current.get.height != sourceHeight ||
-        current.get.format != sourcePixelFormat.asString
+      if current == null || current.width != sourceWidth ||
+        current.height != sourceHeight ||
+        current.format != sourcePixelFormat.asString
       then
         releaseSourceTexture()
         val tex = painter.device.createTexture(
@@ -833,7 +833,7 @@ class Panel private[painter] (val painter: Painter):
     sourceInSlot0 = false
 
   private def releaseSourceTexture(): Unit =
-    if sourceTexture.notNull then sourceTexture.get.destroy()
+    if sourceTexture != null then sourceTexture.get.destroy()
     sourceTexture = null
     sourceView = null
     sourceGroup = null

@@ -100,7 +100,7 @@ object CanvasSurface:
       canvas: HTMLCanvasElement,
       format: Maybe[TextureFormat] = Maybe.Not,
   ): CanvasSurface =
-    new CanvasSurface(canvas, format.orElse(preferredFormat()))
+    new CanvasSurface(canvas, format.getOr(preferredFormat()))
 
   /** `navigator.gpu.getPreferredCanvasFormat()`, or `bgra8unorm` where the
     * browser lacks it.
@@ -108,7 +108,7 @@ object CanvasSurface:
   private def preferredFormat(): TextureFormat =
     val gpu = WebGPU.getGPU()
     if gpu.isEmpty then TextureFormat.Bgra8Unorm
-    else TextureFormat.of(gpu.safe.getPreferredCanvasFormat())
+    else TextureFormat.of(gpu.get.getPreferredCanvasFormat())
 
 /** The surface of an offscreen painter, created on a [[PixelTarget]]. Not
   * user-facing: [[Painter.init]] wraps the target in it. `show` renders into

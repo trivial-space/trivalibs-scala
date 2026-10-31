@@ -80,8 +80,8 @@ class Layer[U, P] private[painter] (
     * override slot 0 even for a pong-dispatched layer).
     */
   private[painter] def autoPongsSlot0: Boolean =
-    shade.panelBindGroupLayout.notNull &&
-      (panelBindings.length == 0 || panelBindings(0).isNull)
+    shade.panelBindGroupLayout != null &&
+      (panelBindings.length == 0 || panelBindings(0) == null)
 
   /** Set [[blendState]] / [[mipSource]] / [[mipTarget]]; returns `this`. */
   def set(

@@ -228,5 +228,5 @@ the same all-in-memory limit and belongs to the same enhancement.
   surfaces, frame scheduling (`Surface.requestFrame`, `p.animate`), whether
   browser sketches take a `Surface`, and moving `Painter.input` onto
   `CanvasSurface`.
-- [opt-maybe-extension-shadowing-plan.md](opt-maybe-extension-shadowing-plan.md):
-  the library trap found in M1.1.
+- [opt-maybe-extension-shadowing-plan.md](done/opt-maybe-extension-shadowing-plan.md):
+  the library trap found in M1.1 (done).

@@ -49,7 +49,7 @@ class HeadlessPainterTest extends FunSuite:
 
   private def gpuOrSkip: Future[GPU] =
     gpu.map: g =>
-      assume(g.notNull, "node-webgpu not available")
+      assume(g != null, "node-webgpu not available")
       g.get
 
   private def painterOn(

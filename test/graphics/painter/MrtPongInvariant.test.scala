@@ -6,11 +6,13 @@ import trivalibs.utils.js.*
 import scala.scalajs.js
 
 /** The MRT + auto-pong config-time invariant (`Panel.set`) is pure predicate
-  * logic — it reads `.notNull` on the shade's panel bind-group layout and the
+  * logic — it null-checks the shade's panel bind-group layout and the
   * layer's `panelBindings`, never a GPU resource. So it can be exercised with
   * stub layers and a null painter, no `GPUDevice` required.
   */
 class MrtPongInvariantTest extends FunSuite:
+
+  private def stub[T]: T = null.asInstanceOf[T]
 
   // A stub shade whose only meaningful field is whether it carries a panel
   // bind-group layout (the auto-pong signal). All GPU handles stay null — the
@@ -21,20 +23,20 @@ class MrtPongInvariantTest extends FunSuite:
       else null
     new Shade[Any, Any](
       id = 0,
-      shaderModule = null,
+      shaderModule = stub,
       vertexBufferLayout = null,
       valueBindGroupLayout = null,
       panelBindGroupLayout = layout,
-      pipelineLayout = null,
+      pipelineLayout = stub,
       isLayer = true,
       uniformIndices = Dict[Int](),
       panelIndices = Dict[Int](),
     )
 
   private def layer(hasPanelLayout: Boolean): Layer[Any, Any] =
-    new Layer[Any, Any](null, stubShade(hasPanelLayout))
+    new Layer[Any, Any](stub, stubShade(hasPanelLayout))
 
-  private def panel(): Panel = new Panel(null)
+  private def panel(): Panel = new Panel(stub)
 
   private val twoFormats =
     Arr(TextureFormat.Rgba8Unorm, TextureFormat.Rgba16Float)

@@ -70,17 +70,17 @@ private[painter] final class Readback(
     // Reserve the frame's slot now, so frames land in `show` order even when
     // completions don't.
     val frameSlot =
-      if frames.notNull then frames.get.push(null.asInstanceOf[PixelData]) - 1
+      if frames != null then frames.push(null.asInstanceOf[PixelData]) - 1
       else -1
 
     val done = buffer
       .mapAsync(GPUMapMode.READ)
       .map: _ =>
         val mapped = buffer.getMappedRange()
-        if frames.notNull then
+        if frames != null then
           val data = PixelData.alloc(format, width * height)
           PixelData.copyRows(mapped, data, format, width, height, bytesPerRow)
-          frames.get(frameSlot) = data
+          frames(frameSlot) = data
         else
           val last = imageWrites.get(image)
           if js.isUndefined(last) || last.asInstanceOf[Int] < index then

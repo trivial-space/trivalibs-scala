@@ -170,11 +170,26 @@ minimal JS:
   or manual loops. `Dict[V]` works as a string-keyed cache (plain JS object).
   For integer-indexed sparse data, use `Arr[T | Null]`.
 - **No `Option`**: Two substitutes in `utils/js.scala`, pick by semantics:
-  - `Opt[T]` (`T | Null`) — nullable value. Empty is `null`. Check with
-    `.isNull` / `.notNull`, unwrap with `.getOr(default)` / `.get`.
+  - `Opt[T]` (`T | Null`) — nullable value. Empty is `null`. Check with plain
+    `x == null` / `x != null`.
   - `Maybe[T]` (`js.UndefOr[T]`) — "not provided" semantics. Empty is
-    `Maybe.Not`. Unwrap with `.orElse(default)` / `.safe`, chain with
-    `.orMaybe(...)`. Build conditionally with `maybe(condition, value)`.
+    `Maybe.Not`. Check with `js.isUndefined(x)`. Build conditionally with
+    `maybe(condition, value)`.
+  - Both share one API with `Option` semantics: `.get` (unchecked unwrap, a cast
+    that never throws), `.getOr(default)`, `.orElse(alternative)` (returns an
+    optional). It exists only on values whose static type is optional, so it
+    never shadows same-named `js.Dynamic` or `Selectable` members.
+  - `Maybe[Opt[T]]` ("not passed" vs. "explicitly `null`", e.g. `blendState`
+    params): the ops act on the `Maybe` layer first, so `c.getOr(null)` yields
+    the `Opt[T]`.
+  - `x != null` on a local or parameter narrows `x` to `T`, so no `.get` after
+    it. Fields don't narrow: unwrap them with `.get`. Never use the stdlib
+    `.nn`; it throws a Java `NullPointerException`.
+- **Explicit nulls**: trivalibs and every consumer compile with
+  `-Yexplicit-nulls`. The `Opt` guard depends on it: without it every reference
+  type is nullable again, and the `Opt` ops would shadow `js.Dynamic` /
+  `Selectable` members. Nullable fields, vars and params are typed `Opt[…]`; no
+  `scala.language.unsafeNulls`.
 - **No `case class` for keys**: Build string keys manually with `s"..."` for
   cache lookups in `Dict`.
 - **`.map/.filter/.sortBy` must delegate to JS**: Use `inline` extension methods
@@ -259,6 +274,12 @@ avoid them; in `inline` library helpers, route through native JS:
   `trivalibs.utils.js` — they compile to raw JS property access. Prefer the
   `Dict` alias over `js.Dictionary` everywhere; the extensions are in scope
   wherever `Dict` is imported.
+- **`.get` / `.orElse` on a non-optional value whose type mentions `Unit`**
+  (e.g. `LineVertex[Unit]`, or one narrowed by `x != null`) → Scala.js finds
+  `js.internal.UnitOps.unitOrOps` through the implicit scope of `Unit`, so
+  instead of a compile error the call becomes `UndefOrOps.get`, which throws
+  `java.util.NoSuchElementException`. Drop the redundant `.get`. Detect it by
+  searching a `jsMode full` bundle for `"undefined.get"`.
 
 ### Diagnosing bundle size
 

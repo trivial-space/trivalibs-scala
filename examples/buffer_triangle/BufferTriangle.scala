@@ -31,7 +31,7 @@ object BufferTriangle:
       setStatus("WebGPU is not supported in this browser", true)
     else
       setStatus("WebGPU available, initializing...", false)
-      initWebGPU(gpu.safe, canvas, setStatus)
+      initWebGPU(gpu.get, canvas, setStatus)
 
   def initWebGPU(
       gpu: GPU,

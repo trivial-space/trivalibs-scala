@@ -49,12 +49,12 @@ class DevCodecTest extends FunSuite:
 
   test("decode of wrong type returns null"):
     val codec = summon[DevCodec[Double]]
-    assert(codec.decode(js.JSON.parse("\"not a number\"")).isNull)
+    assert(codec.decode(js.JSON.parse("\"not a number\"")) == null)
 
   test("decode of too-short array returns null"):
     val codec = summon[DevCodec[Vec3]]
-    assert(codec.decode(js.JSON.parse("[1, 2]")).isNull)
+    assert(codec.decode(js.JSON.parse("[1, 2]")) == null)
 
   test("decode of non-array for Vec3 returns null"):
     val codec = summon[DevCodec[Vec3]]
-    assert(codec.decode(js.JSON.parse("42")).isNull)
+    assert(codec.decode(js.JSON.parse("42")) == null)

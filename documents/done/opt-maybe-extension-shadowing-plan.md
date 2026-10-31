@@ -1,7 +1,7 @@
 # `Opt` / `Maybe` extensions shadow dynamic and `Selectable` members
 
-**Status: planned, not implemented.** Found during M1.1 of
-[headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md)
+**Status: done.** Found during M1.1 of
+[headless-painter-and-texture-sources-plan.md](headless-painter-and-texture-sources-plan.md)
 (§9, "Library trap"). It was worked around there with a typed facade; this plan
 fixes the cause, and enables explicit nulls (`-Yexplicit-nulls`) for trivalibs
 and the consuming repo in the same change, because the fix depends on it.
@@ -149,7 +149,9 @@ extension [O, A](m: O)(using Unit <:< O, O <:< (A | Unit))
 ```
 
 plus `//> using option -Yexplicit-nulls` in **both** `trivalibs/project.scala`
-and the consuming repo's `project.scala`.
+and the consuming repo's `project.scala`. This is the guard as first verified;
+the implemented shape merges both extensions behind one typeclass, see "One API
+for both types" below.
 
 ### Verified
 
@@ -178,6 +180,87 @@ return ((x !== null ? x : new $c_LFoo(9)).g + y.length) | 0
 
 Neither guard leaves anything in the bundle.
 
+### One API for both types
+
+The guard change is also the moment to fix the names. Today `Opt` and `Maybe`
+use different names for the same operation, and `Maybe.orElse` unwraps, the
+opposite of `Option.orElse` and of Scala.js's own `UndefOrOps.orElse`. Both
+types get the same names, with `Option` semantics but shorter:
+
+| Operation                        | `Opt` before         | `Maybe` before | `Option`                | After (both)                               |
+| -------------------------------- | -------------------- | -------------- | ----------------------- | ------------------------------------------ |
+| unchecked unwrap                 | `get`                | `safe`         | `get`                   | `get`                                      |
+| unwrap with default              | `getOr`              | `orElse`       | `getOrElse`             | `getOr`                                    |
+| fall back to another optional    | —                    | `orMaybe`      | `orElse`                | `orElse`                                   |
+| emptiness check                  | `isNull` / `notNull` | —              | `isEmpty` / `isDefined` | dropped: `x == null` / `js.isUndefined(x)` |
+| `js.Promise[A \| Null]` defaults | `orElse` (unwraps)   |                |                         | `getOr`                                    |
+
+- **No emptiness ops.** `isNull` / `notNull` were dropped during implementation.
+  `x != null` narrows a local or parameter to `A` (flow typing), `.notNull`
+  never does, and on fields neither narrows. So `.notNull` was never the better
+  form, and dropping it also removes its `NotGiven[Unit <:< O]` guard and the
+  `Maybe[Opt[A]]` pitfall (an undefined value reporting `notNull`). An `isEmpty`
+  would have been worse anyway: on an `Opt[String]` or `Opt[Arr]` it reads as a
+  length check.
+- `Maybe` needs its own `get` regardless: once the `Opt` guard rejects `Maybe`
+  values, `m.get` would fall through to `UndefOrOps.get`, which throws
+  `java.util.NoSuchElementException` and links stdlib code, without any compile
+  error.
+
+Two separately guarded extension blocks with the same names are ambiguous in
+generic code (`def f[T](x: Opt[T]) = x.getOr(d)` → "Ambiguous overload"). So
+`get` / `getOr` / `orElse` live in **one** extension, guarded by a typeclass
+with one instance per sentinel:
+
+```scala
+sealed trait Optional[O]:
+  type Elem
+type OptionalOf[O, A] = Optional[O] { type Elem = A }
+
+trait OptionalLowPriority:
+  inline given nullable: [A] => OptionalOf[A | Null, A] = null.asInstanceOf[…]
+object Optional extends OptionalLowPriority:
+  inline given undefinable: [A] => OptionalOf[A | Unit, A] = null.asInstanceOf[…]
+
+extension [O](x: O)(using ev: Optional[O])
+  inline def get: ev.Elem
+  inline def getOr(default: => ev.Elem): ev.Elem
+  inline def orElse(alternative: => O): O
+  // empty check picked by summonFrom: Unit <:< O → js.isUndefined, else == null
+```
+
+- The instances match the union's shape (`A | Null`, `A | Unit`). A guard of the
+  form `O <:< (A | Unit)` infers `A = Matchable` on a three-member union.
+- **`Elem` is a type member**, not a second type parameter. With
+  `extension [O, A]`, an expected result type constrains the free `A` before the
+  instance is found: `Obj.literal(x = opt.get)` expects `js.Any`, so
+  `A <: js.Any` and an `Opt[String]` no longer matches. With `ev.Elem` there is
+  no type variable to constrain; `String` comes back and converts to `js.Any` as
+  before.
+- The instances are `inline given`s whose value is a `null` cast, so the
+  argument is a literal the inliner drops.
+- **Maybe first.** `Maybe[Opt[A]]` (used for "not passed" vs. "explicitly null"
+  painter parameters such as `blendState` and `clearColor`) is
+  `A | Null | Unit`, so both instances match. The `Maybe` instance has priority:
+  operations act on the undefined layer first. `c.getOr(null)` yields the
+  `Opt[A]`, and a second `.getOr(d)` then uses the `Opt` instance.
+  `Opt[Maybe[A]]` is the same type and behaves the same way.
+
+Verified in the same standalone setup: `Opt`, `Maybe`, `Maybe[Opt[Foo]]`,
+`Opt[Maybe[Int]]` and generic `def f[T](x: Opt[T])` / `Maybe[T]` all resolve;
+`js.Dynamic` `Map.get("k")` and `Selectable` fields still win; `"x".get` and
+`foo.getOr(foo)` on a non-optional `Foo` don't compile. `jsMode full` output
+with runtime-only values:
+
+```js
+var x = (((o === null) ? new $c_LFoo(9) : o).c + ((m === (void 0)) ? new $c_LFoo(8) : m).c + o.c + m.c) | 0
+function $p_…__genM$2__O__O__O($thiz, x, d) {
+  return ((x === (void 0)) ? d : x)
+}
+```
+
+No trace of `Optional` remains in the bundle.
+
 ### Consequences
 
 - **The flag is load-bearing for `Opt`.** Without it, `Null <:< AnyRef`-types
@@ -188,21 +271,19 @@ Neither guard leaves anything in the bundle.
   published artifact it has to be documented as a requirement. The `Maybe` guard
   doesn't depend on the flag.
 - **`Opt` / `Maybe` operations need a value typed as optional.** Calling `.get`
-  / `.notNull` on a non-nullable value is now a compile error rather than a
-  no-op. Sites that do it on purpose either drop the redundant call or ascribe
-  the value (`val e: Opt[Element] = …`). This mostly matters for scalajs-dom
-  facades, which declare nullable returns such as `getElementById` as
-  non-nullable.
-- **`.notNull` does not flow-type.** Flow typing only recognizes a literal
-  `x != null` / `x ne null`, and the inline extension is expanded after the
-  typer. So `if x.notNull then use(x)` fails, because `x` is still `T | Null`.
-  Either write `x != null` (works on local `val`s and unmutated local `var`s) or
-  unwrap with `x.get`. Class fields never flow-type, so `.get` is the form
-  there.
+  / `.getOr` on a non-nullable value is now a compile error rather than a no-op.
+  That includes a value already narrowed by `x != null`. Sites that do it on
+  purpose either drop the redundant call or ascribe the value
+  (`val e: Opt[Element] = …`). This mostly matters for scalajs-dom facades,
+  which declare nullable returns such as `getElementById` as non-nullable.
+- **Null checks are plain comparisons.** Flow typing recognizes only a literal
+  `x != null` / `x ne null`, which is why `isNull` / `notNull` were dropped.
+  `x != null` narrows local `val`s, parameters, stable paths of `val`s and
+  unmutated local `var`s; on a field, unwrap with `x.get`.
 - **Avoid the stdlib `.nn`.** It throws `NullPointerException`, a Java exception
   (see "No Scala/Java exceptions" in `CLAUDE.md`). `.get` is the unchecked
   unwrap, `getOr` the checked one.
-- **Receivers typed `Any`** still satisfy both guards (`Null <: Any`,
+- **Receivers typed `Any`** still satisfy the guard (`Null <: Any`,
   `Unit <: Any`). Harmless: `Any` has no dynamic members.
 
 ### Migration size
@@ -253,18 +334,23 @@ on a value that isn't typed optional.
      nullable, so it keeps working under D.
    - Remove the audit extension afterwards.
 
-3. **Swap in the guarded extensions** in `utils/js.scala` (§3). Fix every
-   `Cannot prove that Null <:< …` / `Unit <:< …`: drop the redundant operation,
-   or ascribe the value as `Opt` / `Maybe`. Leave the `@targetName`s as they
-   are.
+3. **Swap in the guarded extensions** in `utils/js.scala` (§3, "One API for both
+   types"). Rename call sites: `Maybe` `safe` → `get`, `orElse` → `getOr`,
+   `orMaybe` → `orElse`; nullable-promise `orElse` → `getOr`. Drop `isNull` /
+   `notNull` for `x == null` / `x != null`. Fix every missing `Optional`
+   evidence: drop the redundant operation, or ascribe the value as `Opt` /
+   `Maybe`.
 4. **Tests** in `test/utils/OptMaybeShadowing.test.scala`:
    - `js.Dynamic` over a JS `Map`: `.get("k")` and `.set` reach the JS methods;
-   - a `Selectable` with fields named `get`, `isNull`, `orElse` and `safe`
-     returns the fields;
-   - `Opt[js.Dynamic]`: `.notNull` and `.get` are the `Opt` operations;
+   - a `Selectable` with fields named `get`, `getOr` and `orElse` returns the
+     fields;
+   - `Opt[js.Dynamic]`: `.get` and `.getOr` are the `Opt` operations;
    - `Opt[String]` / `Opt[SomeClass]` / `Opt[Int]` and `Maybe[Int]` keep every
      operation, including inside a generic `def f[T](x: Opt[T])`;
-   - `compileErrors("\"x\".get")` / `compileErrors("\"x\".safe")` are non-empty.
+   - `Maybe[Opt[A]]`: operations act on the `Maybe` layer first;
+   - an expected `js.Any` result (`Obj.literal(a = s.get)`) still infers;
+   - `compileErrors` on `"x".get`, `"x".getOr(…)`, `Box(1).orElse(…)` is
+     non-empty.
 5. **Revisit the M1.1 workaround.** `Readback`'s `WeakIntMap` facade stays:
    typed facades are the house style anyway. Its comment and the
    implementation-log entry no longer call it a workaround.
@@ -284,11 +370,38 @@ on a value that isn't typed optional.
    - all sketches of the consuming repo compile;
    - one `jsMode full` diff of a representative bundle shows no size change.
 
-## 5. Open questions
+## 5. Implementation log
 
-- Should scalajs-dom calls that can return `null` (`getElementById`,
-  `querySelector`, `getContext`) get typed `Opt` wrappers in trivalibs? Only if
-  the migration turns up more than a handful of sites.
+- **Step 1** matched the measured migration: about 45 errors in `painter.scala`,
+  `extended.scala` (the `null` out-param of the inline kernels became
+  `Opt[Vec3]` / `Opt[Vec4]`, unwrapped with `.get` inside `inline if gradient`)
+  and `form.scala` (`uploadIndices` now assigns `data` from an if-expression
+  instead of a `null` placeholder). Tests needed 5 more: `MrtPongInvariant`
+  passes typed `null` stubs for GPU handles it never touches.
+- **Step 2:** the audit had zero hits in lib, examples, tests, sketches and
+  `src`.
+- **Step 3** changed the design twice:
+  - `extension [O, A](x: O)(using Optional[O, A])` broke
+    `Obj.literal(x = opt.get)`: the expected `js.Any` constrained `A` first.
+    `Elem` became a type member (§3, "One API for both types").
+  - `isNull` / `notNull` were dropped (see the same section). The sweep turned
+    102 calls into `== null` / `!= null`; narrowing then made 65 `.get`s
+    redundant, which the guard reported and which were removed.
+  - `Panel.set` lost an `asInstanceOf[AnyShape]` that `orMaybe(Any)` used to
+    hide: the typed `orElse` takes `shape.map(s => Arr(s))` directly.
+- **Trap found in verification:** on `LineVertex[Unit]`, a redundant `next.get`
+  (after `next != null`) did not fail to compile but resolved to Scala.js's
+  `UnitOps.unitOrOps(...).get`, found through the implicit scope of `Unit`. It
+  links `java.util.NoSuchElementException`. A typer-tree scan of both repos
+  found no other `get` / `orElse` through `unitOrOps`; the trap is listed under
+  "Known stdlib-leak traps" in `CLAUDE.md`.
+- **Verified:** `bun run check`, `bun run test` (39 suites) and the consuming
+  repo's tests pass; all examples build; `headless_triangle` passes and rewrites
+  its assets byte for byte; all sketches and `src` compile. `jsMode full`, all
+  examples: 2,183,453 → 2,180,937 bytes (−2.5 KB), from removed null-check casts
+  and the dropped `Panel.set` cast.
+- **Open question resolved:** scalajs-dom nullable returns needed no typed `Opt`
+  wrappers; the migration turned up none.
 
 ## 6. Out of scope
 
