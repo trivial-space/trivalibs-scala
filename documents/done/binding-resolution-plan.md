@@ -1,9 +1,10 @@
 # Binding resolution and bind-group caching
 
-**Status: step 1 implemented and browser-checked (2026-11-01). Step 2
-implemented (2026-11-01), headless-tested; browser check of the examples
-pending.** Internal refactor of `Painter` in two steps, each shippable and
-checkable on its own. No API change.
+**Status: done (2026-11-01). Both steps implemented, headless-tested and checked
+in the browser (examples and sketches). Archived.** Where the implementation
+differs from the design below, the [dev log](#dev-log) says so. Internal
+refactor of `Painter` in two steps, each shippable and checkable on its own. No
+API change.
 
 - **Step 1 — resolver.** One code path that resolves each slot while building
   its bind group. Behavior changes: the slot-0 rule, the auto-pong rule (incl.
@@ -203,7 +204,7 @@ step 2 it runs only when a group is built.
 ### Step 1 proof
 
 - All examples render unchanged (shapes, layers, instances, panel runtime
-  bindings, ping-pong, mip chains). _Pending: browser check by hand._
+  bindings, ping-pong, mip chains). _Done: browser check by hand._
 - Existing painter tests pass. _Done: all 39 suites._
 - Precedence order (instance > shape/layer > panel runtime). _Done:
   `HeadlessPainterTest`._
@@ -349,14 +350,86 @@ cache key reads it) and the `onBindingsChanged` hook (replaced by
   resize. _Done._
 - The cache tests fail against three mutations: no bump in `allocDepth`,
   `bindVersion` bumped on every bind, the epoch check disabled. _Done._
-- All examples render unchanged. _Pending: browser check by hand._
+- All examples render unchanged. _Done: browser check by hand, sketches
+  included._
 - `jsMode full` bundle of an example: no growth. _Measured against HEAD (before
   step 1): +926 to +1,183 B minified, +288 to +350 B gzipped per example
   (`panel_triangle`, `deferred`, `instances`); step 1 accounts for 154 B of it.
   The rest is the cache itself: `BindCache`, the cached branch of
   `setBindGroups`, `panelViewsCurrent`, the slot setters._
 
-Found while testing, unrelated to this plan: sampling a panel's depth
-(`FragmentDepthPanel`, `binding(depth = true)`) in the headless painter reads 0
-instead of the written depth 0.5 — at HEAD too, before either step. Not
-investigated.
+## Dev log
+
+### Step 1 — resolver (2026-11-01)
+
+- **Pre-check passed:** of the four blend-state layers in the sketches, the
+  three `canvasShade` layers bind slot 0 (`src`) themselves and `shadowShade`
+  has no panel slots, so none pongs or relies on the loaded scratch.
+- **`autoPongsSlot0` split in two** instead of taking the panel: `mayPong`
+  (static, conservative) still drives pong allocation (`Panel.needsPong`) and
+  the config-time MRT invariant; `pongsOn(panel)` is the per-frame dispatch
+  decision. `pongsOn` implies `mayPong`, so the scratch is always allocated when
+  needed. `pongsOn` checks the layer's own slot 0 (via `mayPong`) and the
+  panel's runtime binding before it iterates instances.
+- **`uniformNames` / `panelNames`** are built in the `Shade` body by inverting
+  the index dicts, not passed in, so none of the 8 constructor calls changed.
+- **Test that passed by coincidence:** the all-instances composite test first
+  painted twice; on the second paint the stale pong scratch equals the clear
+  color, so it passed against the old pong decision too. One paint tells them
+  apart. Both pong tests were then checked to fail against the old decision and
+  against `loadOp = "load"`.
+- **Docs:** `docs/guide/gotchas.md` explains the slot-0 rule with instances and
+  panel bindings, and "reads the previous output → replaces, otherwise
+  composites".
+- **Verified:** clean `bun run check`; `bun run test` 39 suites (27 headless);
+  bundle +154 B minified per example; examples and sketches checked in the
+  browser.
+
+### Step 2 — cache (2026-11-01)
+
+- **Bug reproduced first:** the new test "a static layer follows a sampled pong
+  panel across swaps" failed on the step-1 code, showing the source before the
+  invert (the stale slot-0 texture), and passes after.
+- **`srcView` checked by identity, not through the target's epoch.** `BindCache`
+  stores the `srcView` slot 0 fell back to and compares it on each hit. That one
+  reference compare covers a swap, a realloc, a changed `mipSource` and the same
+  layer drawn into another panel, without recording the target panel among the
+  sampled panels.
+- **`setBindGroups(pass, x, inst, runtime, srcView)`** takes the shape or layer
+  instead of its slot arrays; the owner is `inst` or `x`. One `BindCache` per
+  owner, allocated on the first cached draw.
+- **Panel slots compare by content.** `.bind("src" := panel)` allocates a new
+  `PanelBinding` on every call, so `setPanelSlot` compares panel, index, mip
+  level and depth flag; rebinding the same panel per frame does not bump
+  `bindVersion`. Value slots compare by reference (`js.special.strictEquals`;
+  `!=` linked `BoxesRunTime.equals`).
+- **Fourth bump site:** `adoptSlot0AsSource` shifts slot 0's texture and view
+  into the source. A `reallocate` always follows today; it bumps on its own
+  anyway.
+- **Rules recorded where future work meets them:** the `bindEpoch` doc comment,
+  and two rules in `trivalibs/CLAUDE.md` (painter source layout): call
+  `viewsChanged()` for any panel texture or view change; write slots only
+  through `setValueSlot` / `setPanelSlot`. The open GPU-freeing todo in
+  `independent-todos.md` notes that `Panel.destroy()` must call
+  `viewsChanged()`.
+- **Tests:** the stale-layer repro; `createBindGroup` counts (raw uniform
+  updates build nothing, a different `BufferBinding` builds one, only the two
+  pong-sampling groups rebuild per frame, a resize rebuilds once); epoch bumps
+  for `swapPair`, `reallocate` and `allocDepth`. All four fail against three
+  mutations (no bump in `allocDepth`, `bindVersion` bumped on every bind, the
+  epoch check disabled). Not covered: `adoptSlot0AsSource`.
+- **Bundle:** examples grow, sketches with many binds shrink. Against the code
+  before step 1, examples gain +926 to +1,183 B minified (+288 to +350 B
+  gzipped). `bind` / `processEntry` are `inline`, so each bind pair used to
+  expand the whole slot write at its call site; it is now one setter call. That
+  saves bytes per bind pair against a fixed cost of about +500 B: committed
+  sketch bundles range from +370 to +510 B (one bind) to −172 B
+  (`rooms/canvases`), −340 to −390 B (room templates) and −891 B
+  (`experiments/grid-ceiling`).
+- **Verified:** clean `bun run check`; `bun run test` 39 suites (31 headless);
+  examples and sketches checked in the browser.
+
+### Found along the way
+
+- **Sampled depth reads 0 in the headless painter**, before either step too. Not
+  investigated; moved to `independent-todos.md` (Painter).

@@ -69,7 +69,11 @@ Add a public `destroy(): Unit` to the painter classes that own GPU resources:
   the one the baker would actually use (free the transient `model` binding after
   `p.paint`).
 - **`Panel`** (`panel.scala`) — destroy color / pong / msaa / depth textures;
-  reuse the existing texture-teardown logic (`panel.scala:133-134, 450-458`).
+  reuse the existing texture-teardown logic (`panel.scala:133-134, 450-458`). It
+  must call `viewsChanged()`, like every other texture or view change: bind
+  groups cached on shapes and layers that sample the panel check its `bindEpoch`
+  (see the `bindEpoch` contract and
+  [binding-resolution-plan.md](done/binding-resolution-plan.md)).
 - **`Painter`** — `destroy()` → `device.destroy()`, plus a pending-work drain
   (`queue.onSubmittedWorkDone()`) before it. Deferred out of
   [headless-painter-and-texture-sources-plan.md](done/headless-painter-and-texture-sources-plan.md):
@@ -143,6 +147,20 @@ scale; revisit when a sketch churns GPU resources at runtime.
 ---
 
 ## Painter
+
+### 🔄 Sampled depth reads 0 in the headless painter
+
+Found while testing
+[binding-resolution-plan.md](done/binding-resolution-plan.md) step 2; present
+before that work too. A layer sampling a depth panel
+(`(depth: FragmentDepthPanel)`, bound as `scene.binding(depth = true)`, read
+with `ctx.textures.depth.load(ivec2(ctx.fragCoord.xy))`) gets 0, where the
+scene's full-screen shape writes depth 0.5. Order tried: paint the scene, paint
+the reader (lazy depth upgrade), paint the scene again, paint the reader. Not
+investigated: whether the depth pass writes into the upgraded texture, whether
+`load` on `depth24plus` behaves on node-webgpu's backend, or whether the test
+setup is wrong. Check against a browser sketch that samples depth
+(`experiments/grid-ceiling`, `src/utils/mirror`).
 
 ### 🔄 Precompute the invariant parts of the pipeline cache key
 
