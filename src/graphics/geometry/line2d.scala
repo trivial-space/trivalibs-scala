@@ -20,7 +20,7 @@ import trivalibs.utils.numbers.NumExt.given
   * user `data`. Use `LineVertex(pos, width)` for data-less lines.
   *
   * `width` is the **full** stroke width in the line's own units — the outline
-  * sits at `±width/2` from the centre line, as `lineWidth` does in SVG and
+  * sits at `±width/2` from the center line, as `lineWidth` does in SVG and
   * Canvas.
   */
 class LineVertex[T](
@@ -267,7 +267,7 @@ class Line[T](
   /** Narrow the stroke wherever the line turns tighter than its own width can
     * carry, so the inner outline never folds back through the corner.
     *
-    * A ribbon is the centre line offset by half its width. Offsetting by more
+    * A ribbon is the center line offset by half its width. Offsetting by more
     * than the turn can accommodate makes the inner offset self-intersect: it
     * runs forward, doubles back through the corner and runs forward again,
     * covering that patch three times. This pass prevents it by construction —
@@ -358,13 +358,13 @@ class Line[T](
   * rib — measured across it, after mitring and smoothing, so it reports the
   * narrowing at a bevelled corner rather than the width that was requested. Cap
   * ribs borrow their neighbour's, since their own is zero and `uv.y = 0.5`
-  * already places them on the centre line.
+  * already places them on the center line.
   *
   * A width change along the stroke shears the quads, so interpolating `uv.y`
   * directly kinks at every triangle diagonal. Divide instead: pass
   * `uv.y * width` and `width` as varyings, then in the fragment stage
   * `v = num / den` (exact) and `d = num - 0.5 * den` for a signed distance from
-  * the centre line in world units.
+  * the center line in world units.
   */
 type LineAttribs = (
     position: Vec2,
@@ -799,7 +799,7 @@ object Line:
         var bottom = normal * -bottomOffset + v.pos
 
         if !hasPrev then
-          // start cap: a degenerate vertex on the centre line
+          // start cap: a degenerate vertex on the center line
           topLine.add(v.pos, v.width, Vec2(lineLength, 0.5))
           bottomLine.add(v.pos, v.width, Vec2(lineLength, 0.5))
 
@@ -869,7 +869,7 @@ object Line:
       // keeps `d = uv.y * width - 0.5 * width` the true signed distance on both
       // sides. With no clamping the span is 1 and this is just the rib length.
       //
-      // Cap ribs are degenerate — both vertices sit on the centre line at
+      // Cap ribs are degenerate — both vertices sit on the center line at
       // `uv.y = 0.5`, so the rib has no length and no span — and borrow their
       // neighbour's. That keeps the divisor positive while `uv.y = 0.5` is what
       // places them at distance zero.

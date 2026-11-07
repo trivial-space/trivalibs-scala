@@ -262,7 +262,7 @@ per segment so stroke continuity is the default.
 | `Line.splitAtAngle`                        | corner detection splits at expected segment boundaries               |
 | `toBufferedGeometry` vert count            | `2N + cap adjustments` for N input verts                             |
 | `toBufferedGeometry` index count           | correct zig-zag triangle-strip pattern                               |
-| `toBufferedGeometry` UV                    | first / last vertex `v = 0.5` (cap centre); midpoints alternate      |
+| `toBufferedGeometry` UV                    | first / last vertex `v = 0.5` (cap center); midpoints alternate      |
 | `toBufferedGeometries` direction threading | segment-N's `prevDirection` equals segment-(N-1)'s last `dir`        |
 
 ---
@@ -296,7 +296,7 @@ One `Form` holding **all** fragment geometries
 
 `Attribs = LineAttribs`, `Varyings = (uv: Vec2, localUv: Vec2)`,
 `Uniforms = (size: VertexUniform[Vec2])`. Vert: `pos = position / size`, output
-`vec4(pos.x, -pos.y, 0, 1)` (no `fit0111` — the points are generated centred on
+`vec4(pos.x, -pos.y, 0, 1)` (no `fit0111` — the points are generated centered on
 the origin, as in the original test). Frag: `vec4(uv, 1, 1)` — the original
 test's uv debug color, which makes mitre and uv errors immediately visible.
 White clear color; `onResize` regenerates the geometry and updates `size`.

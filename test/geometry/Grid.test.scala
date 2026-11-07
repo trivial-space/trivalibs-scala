@@ -214,7 +214,7 @@ class GridTest extends FunSuite:
     // mid row (y=1): midpoint between row0 and row1 in the subdivided grid
     assertEqualsDouble(g2.get(0, 1), 2.0, 1e-9) // (0+4)/2
     assertEqualsDouble(g2.get(2, 1), 1.0, 1e-9) // (2+0)/2
-    // centre point
+    // center point
     assertEqualsDouble(g2.get(1, 1), 1.5, 1e-9) // (1+2)/2 = 1.5
 
   test("subdivide(3,0) rows unchanged, cols 4x-3"):

@@ -25,7 +25,11 @@ class ColorFnsTest extends FunSuite:
   test("hsv2rgb emits piecewise-linear ramp"):
     val data = Color.wgsl.hsv2rgb.asInstanceOf[WgslFnData]
     assert(data.src.contains("fn color_hsv2rgb(c: vec3<f32>)"), data.src)
-    assert(data.src.contains("vec3<f32>(0.0, 4.0, 2.0)"), data.src)
+    assert(
+      data.src.contains("fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0"),
+      data.src,
+    )
+    assert(!data.src.contains("% 6.0"), data.src)
     assert(data.src.contains("clamp("), data.src)
     assert(data.src.contains("c.z * mix(vec3<f32>(1.0), rgb, c.y)"), data.src)
 

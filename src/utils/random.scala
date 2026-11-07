@@ -35,12 +35,12 @@ def randBool(): Boolean = random < 0.5
 /** `-1.0` or `1.0` with equal probability. */
 def randSign(): Double = if random < 0.5 then -1.0 else 1.0
 
-/** Approximately normal-distributed `Double` in `[0, 1]`, centred on `0.5` —
+/** Approximately normal-distributed `Double` in `[0, 1]`, centered on `0.5` —
   * the mean of three uniform samples (Irwin–Hall / Bates).
   */
 def randNormal01(): Double = (random + random + random) / 3.0
 
-/** Approximately normal-distributed `Double` in `[-1, 1]`, centred on `0` —
+/** Approximately normal-distributed `Double` in `[-1, 1]`, centered on `0` —
   * [[randNormal01]] fitted to `[-1, 1]`.
   */
 def randNormal11(): Double = randNormal01() * 2.0 - 1.0

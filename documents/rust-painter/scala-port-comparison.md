@@ -878,7 +878,7 @@ and the procedural builders Rust sketches reach for:
 - **`Quad.fromDimensionsCenter[T](w, h, normal, center)((pos, uv) => v)`**
   ([polygon.scala](../../src/graphics/geometry/polygon.scala)) — the direct Rust
   `Quad3D::from_dimensions_center_f` analog. Builds an arbitrary-orientation
-  quad from a normal + centre. Wrap in `Mesh(Arr(quad))` for
+  quad from a normal + center. Wrap in `Mesh(Arr(quad))` for
   `toBufferedGeometry`. Prefer this over a thin `Box` for single-quad planes
   (ground, walls).
 

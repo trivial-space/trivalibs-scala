@@ -261,7 +261,7 @@ class Line2dTest extends FunSuite:
       Arr(Vec2(0.0, 0.0), Vec2(10.0, 0.0)),
     )
     val geom = line.toBufferedGeometry()
-    // start cap sits on the centre line
+    // start cap sits on the center line
     assertEqualsDouble(readF(geom, 0, 0), 0.0, 1e-6)
     assertEqualsDouble(readF(geom, 0, 4), 0.0, 1e-6)
     assertEqualsDouble(readF(geom, 0, 8), 2.0, 1e-6)
@@ -315,7 +315,7 @@ class Line2dTest extends FunSuite:
     )
     val geom = line.toBufferedGeometry()
     val last = geom.vertices.length / 2 - 1
-    // the cap vertices coincide on the centre line, so their own extent is 0
+    // the cap vertices coincide on the center line, so their own extent is 0
     assert(readF(geom, 0, 8) > 0.0)
     assert(readF(geom, last * 2, 8) > 0.0)
     // uv.y = 0.5 is what places them at distance zero, not the width

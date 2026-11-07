@@ -52,7 +52,7 @@ extension (cross: Vec2Expr)
     */
   inline def lineV: FloatExpr = cross.x / cross.y
 
-  /** Signed distance from the centre line in the line's own units, `∓width/2`
+  /** Signed distance from the center line in the line's own units, `∓width/2`
     * at the outlines. Keeps its physical scale as the stroke widens — the mark
     * of a bigger brush, where a wider stroke shows more features rather than
     * stretched ones.

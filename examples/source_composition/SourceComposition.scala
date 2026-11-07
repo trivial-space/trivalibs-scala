@@ -180,8 +180,7 @@ def main(): Unit =
       mvpA := proj * view * Mat4.fromRotationY(t * 0.7)
       mvpB := proj * view * Mat4.fromRotationY(t * 0.7 + math.Pi / 2)
 
-      val hue = t * 0.1 % 1.0
-      val rgb = Vec3(hue, 0.6, 0.35).hsv2rgb
+      val rgb = Vec3(t * 0.1, 0.6, 0.35).hsv2rgb
       blended.set(clearColor = Vec4(rgb.x, rgb.y, rgb.z, 1.0))
 
       val panel = modes(mode)

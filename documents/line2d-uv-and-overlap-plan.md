@@ -626,7 +626,7 @@ Three details:
 - Use **the vertex's own width** for its window; it is that vertex's offset that
   folds.
 - Under full-width semantics the window is `±width/2` — **one stroke width of
-  line, centred on the vertex**.
+  line, centered on the vertex**.
 - **Clamp the window at fragment boundaries.** It must never reach across a
   split: a reversal's overlap is wanted, and the split corner is an endpoint
   with no join to fix.
@@ -977,7 +977,7 @@ bit-identical, since with equal counts and equal per-rib `data` the old
 
 `ribWidth(r) = |top_r − bottom_r|`, written to both vertices of the rib in place
 of the carried payload width. Cap ribs borrow their neighbour's, since their own
-outline vertices coincide on the centre line; `uv.y = 0.5` is what places them
+outline vertices coincide on the center line; `uv.y = 0.5` is what places them
 at distance zero, so the borrowed value only ever serves as a divisor. `uv.y` is
 otherwise untouched — this is the keep-uv default.
 
@@ -1049,7 +1049,7 @@ them, so nothing built on `d` now needs revisiting.
 `Q = 0` and a `v = 0/0` at the tip under the _plain default_, not only under
 keep-uv. Avoid it without a special case downstream: **the tip keeps
 `uv.y = 0.5` and inherits the adjacent rib's measured width.** Then
-`d = 0.5·w − 0.5·w = 0` (exact — the tip really is on the centre line, where
+`d = 0.5·w − 0.5·w = 0` (exact — the tip really is on the center line, where
 both outlines coincide) and `v = 0.5`, with the inherited width serving only as
 a denominator and never claiming an extent.
 
@@ -1109,7 +1109,7 @@ scale and crops it instead, closer to today's look.
 
 **The tip is handled once, in A4**, by keeping `uv.y = 0.5` there and inheriting
 the neighbouring rib's width — see above. Neither treatment needs to revisit it:
-both give `d = 0` at a point that genuinely lies on the centre line.
+both give `d = 0` at a point that genuinely lies on the center line.
 
 Neither treatment is exact _around_ a curved cap, since the quad there is not a
 trapezoid under either encoding — worth saying plainly rather than claiming
@@ -1126,7 +1126,7 @@ between the arms, ending in a fan of needles.
 **Why every earlier fix missed it.** Every vertex along an arm is _straight_. No
 curvature test has anything to say about a straight vertex, so widening the
 window did nothing, narrowing did nothing, and clamping the inner vertex — even
-all the way onto the centre line — did nothing, because the crossing happens at
+all the way onto the center line — did nothing, because the crossing happens at
 arm vertices, not at the apex.
 
 **The missing term has a name.** An offset curve stays free of self-intersection

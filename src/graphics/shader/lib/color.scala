@@ -18,7 +18,9 @@ import trivalibs.graphics.math.gpu.Vec3Expr
 import trivalibs.graphics.shader.dsl.WgslFn
 import trivalibs.graphics.shader.given
 
-/** Color conversions on the GPU. Hue is in `[0, 1]` (1.0 == 360°) throughout.
+/** Color conversions on the GPU. Hue is in `[0, 1]` (1.0 == 360°) throughout;
+  * the `…2rgb` fns accept any hue and wrap it themselves (`fract`), so no
+  * wrapping is needed before the call.
   *
   * The CPU mirror is `trivalibs.graphics.lib.color.Color`, with the same
   * names and formulation; the shared extensions (`c.hsv2rgb`, …) cover both.
@@ -31,16 +33,22 @@ object Color:
   /** RGB → HSL, `lightness = (max + min) / 2`. */
   inline def rgb2hsl(c: Vec3Expr): Vec3Expr = wgsl.rgb2hsl(c)
 
-  /** HSV → RGB, piecewise linear (cheapest; visible band edges). */
+  /** HSV → RGB, piecewise linear (cheapest; visible band edges). Any hue;
+    * wrapped internally.
+    */
   inline def hsv2rgb(c: Vec3Expr): Vec3Expr = wgsl.hsv2rgb(c)
 
-  /** HSV → RGB with a cubic smoothstep on the ramp. */
+  /** HSV → RGB with a cubic smoothstep on the ramp. Any hue; wrapped
+    * internally.
+    */
   inline def hsv2rgbSmooth(c: Vec3Expr): Vec3Expr = wgsl.hsv2rgbSmooth(c)
 
-  /** HSV → RGB with a quintic smootherstep on the ramp. */
+  /** HSV → RGB with a quintic smootherstep on the ramp. Any hue; wrapped
+    * internally.
+    */
   inline def hsv2rgbSmoother(c: Vec3Expr): Vec3Expr = wgsl.hsv2rgbSmoother(c)
 
-  /** HSL → RGB. */
+  /** HSL → RGB. Any hue; wrapped internally. */
   inline def hsl2rgb(c: Vec3Expr): Vec3Expr = wgsl.hsl2rgb(c)
 
   /** The WgslFn definitions — the layer for `.withDeps` and raw WGSL
@@ -90,12 +98,14 @@ object Color:
     // ---------------------------------------------------------------------------
 
     /** HSV → RGB (Iñigo Quilez piecewise-linear). Input `(hue, saturation,
-      * value)` in [0, 1]; output RGB in [0, 1]. Cheapest of the four hsv→rgb
+      * value)`: saturation and value in [0, 1], hue any value (wrapped via
+      * `fract`); output RGB in [0, 1]. Cheapest of the four hsv→rgb
       * variants — visible color-band edges where the ramp changes slope.
       */
     lazy val hsv2rgb: WgslFn[(c: Vec3), Vec3] =
       WgslFn.raw("color_hsv2rgb"):
-        """  let rgb = clamp(abs(((c.x * 6.0 + vec3<f32>(0.0, 4.0, 2.0)) % 6.0) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
+    let rgb = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
     return c.z * mix(vec3<f32>(1.0), rgb, c.y);"""
 
     /** HSV → RGB with cubic smoothstep on the rgb ramp (`t·t·(3 − 2·t)`). Removes
@@ -103,7 +113,8 @@ object Color:
       */
     lazy val hsv2rgbSmooth: WgslFn[(c: Vec3), Vec3] =
       WgslFn.raw("color_hsv2rgb_smooth"):
-        """  let t = clamp(abs(((c.x * 6.0 + vec3<f32>(0.0, 4.0, 2.0)) % 6.0) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
+    let t = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = t * t * (vec3<f32>(3.0) - 2.0 * t);
     return c.z * mix(vec3<f32>(1.0), rgb, c.y);"""
 
@@ -112,7 +123,8 @@ object Color:
       */
     lazy val hsv2rgbSmoother: WgslFn[(c: Vec3), Vec3] =
       WgslFn.raw("color_hsv2rgb_smoother"):
-        """  let t = clamp(abs(((c.x * 6.0 + vec3<f32>(0.0, 4.0, 2.0)) % 6.0) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
+    let t = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
     return c.z * mix(vec3<f32>(1.0), rgb, c.y);"""
 
@@ -120,7 +132,8 @@ object Color:
     // HSL → RGB
     // ---------------------------------------------------------------------------
 
-    /** HSL → RGB. Input `(hue, saturation, lightness)` in [0, 1]; output RGB in
+    /** HSL → RGB. Input `(hue, saturation, lightness)`: saturation and
+      * lightness in [0, 1], hue any value (wrapped via `fract`); output RGB in
       * [0, 1]. The natural inverse for [[rgb2hsl]].
       *
       * Lightness scales symmetrically: `L = 0` is black, `L = 1` is white,
@@ -129,5 +142,6 @@ object Color:
       */
     lazy val hsl2rgb: WgslFn[(c: Vec3), Vec3] =
       WgslFn.raw("color_hsl2rgb"):
-        """  let rgb = clamp(abs(((c.x * 6.0 + vec3<f32>(0.0, 4.0, 2.0)) % 6.0) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
+    let rgb = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
     return c.z + c.y * (rgb - 0.5) * (1.0 - abs(2.0 * c.z - 1.0));"""

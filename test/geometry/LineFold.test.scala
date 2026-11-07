@@ -89,7 +89,7 @@ class LineFoldTest extends FunSuite:
     val large = limits(arc(4.0, math.Pi * 0.5, 60))(30)
     assertEqualsDouble(large / small, 4.0, 0.1)
 
-  test("two opposite curves: the limit is tightest at each curve's centre"):
+  test("two opposite curves: the limit is tightest at each curve's center"):
     // y = sin(x) over a full period — curvature peaks at the crest and the
     // trough, which bend opposite ways, and falls to nothing at the crossings
     val points = Arr[Vec2]()
@@ -105,7 +105,7 @@ class LineFoldTest extends FunSuite:
     val trough = count * 3 / 4 // x = 3pi/2
     val crossing = count / 2 // x = pi, where the curve is straightest
 
-    // both curve centres are limited
+    // both curve centers are limited
     assert(ls(crest) < 1.5, s"crest not limited: ${ls(crest)}")
     assert(ls(trough) < 1.5, s"trough not limited: ${ls(trough)}")
 
@@ -114,7 +114,7 @@ class LineFoldTest extends FunSuite:
     // rather than adding up into one long bend
     assertUnlimited(ls(crossing), "the inflection")
 
-    // and the limit relaxes on the way from a curve's centre out to it
+    // and the limit relaxes on the way from a curve's center out to it
     assert(
       ls(crest + 20) > ls(crest),
       s"limit did not relax away from the crest: ${ls(crest)} then " +

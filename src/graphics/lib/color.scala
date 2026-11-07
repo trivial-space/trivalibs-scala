@@ -4,7 +4,8 @@ package trivalibs.graphics.lib.color
 // (https://www.shadertoy.com/view/MsS3Wc) as the GPU
 // `trivalibs.graphics.shader.lib.color.Color`, so a color computed on the CPU
 // and uploaded as a uniform matches one computed shader-side from the same
-// HSV. Hue is in [0, 1] (1.0 == 360°) throughout, never degrees.
+// HSV. Hue is in [0, 1] (1.0 == 360°) throughout, never degrees; the `…2rgb`
+// conversions accept any hue and wrap it themselves.
 //
 // HSL vs HSV — both share hue and saturation axes but differ in the third
 // channel:
@@ -35,22 +36,29 @@ extension [C <: Vec3 | Vec3Expr](c: C)
     case _: Vec3 => Color.rgb2hsl(c.asInstanceOf[Vec3])
     case _: Vec3Expr => GpuColor.rgb2hsl(c.asInstanceOf[Vec3Expr])
 
-  /** HSV → RGB, piecewise linear (cheapest; visible band edges). */
+  /** HSV → RGB, piecewise linear (cheapest; visible band edges). Hue may be any
+    * value: it is wrapped into [0, 1) internally, so no `fract` is needed
+    * before the call, and hues below 0 or above 1 keep rotating the spectrum.
+    */
   transparent inline def hsv2rgb: Vec3 | Vec3Expr = inline erasedValue[C] match
     case _: Vec3 => Color.hsv2rgb(c.asInstanceOf[Vec3])
     case _: Vec3Expr => GpuColor.hsv2rgb(c.asInstanceOf[Vec3Expr])
 
-  /** HSV → RGB with a cubic smoothstep on the ramp. */
+  /** HSV → RGB with a cubic smoothstep on the ramp. Hue may be any value; it
+    * wraps internally, as in [[hsv2rgb]].
+    */
   transparent inline def hsv2rgbSmooth: Vec3 | Vec3Expr = inline erasedValue[C] match
     case _: Vec3 => Color.hsv2rgbSmooth(c.asInstanceOf[Vec3])
     case _: Vec3Expr => GpuColor.hsv2rgbSmooth(c.asInstanceOf[Vec3Expr])
 
-  /** HSV → RGB with a quintic smootherstep on the ramp. */
+  /** HSV → RGB with a quintic smootherstep on the ramp. Hue may be any value;
+    * it wraps internally, as in [[hsv2rgb]].
+    */
   transparent inline def hsv2rgbSmoother: Vec3 | Vec3Expr = inline erasedValue[C] match
     case _: Vec3 => Color.hsv2rgbSmoother(c.asInstanceOf[Vec3])
     case _: Vec3Expr => GpuColor.hsv2rgbSmoother(c.asInstanceOf[Vec3Expr])
 
-  /** HSL → RGB. */
+  /** HSL → RGB. Hue may be any value; it wraps internally, as in [[hsv2rgb]]. */
   transparent inline def hsl2rgb: Vec3 | Vec3Expr = inline erasedValue[C] match
     case _: Vec3 => Color.hsl2rgb(c.asInstanceOf[Vec3])
     case _: Vec3Expr => GpuColor.hsl2rgb(c.asInstanceOf[Vec3Expr])
@@ -73,11 +81,15 @@ object Color:
   /** Scalar kernels writing the result into `out` and returning it. */
   object kernel:
 
-    /** The IQ hue ramp: one channel of `clamp(abs(((h·6 + k) mod 6) − 3) − 1,
-      * 0, 1)`, offset `k` being 0 / 4 / 2 for R / G / B.
+    /** The IQ hue ramp: one channel of `clamp(abs(fract(h + k)·6 − 3) − 1, 0,
+      * 1)`, offset `k` being 0 / ⅔ / ⅓ for R / G / B. `fract` floors, so
+      * negative hues wrap like positive ones.
       */
-    private inline def hueRamp(h6: Double, k: Double): Double =
-      ((((h6 + k) % 6.0) - 3.0).abs - 1.0).clamp01
+    private inline def hueRamp(h: Double, k: Double): Double =
+      (((h + k).fract * 6.0 - 3.0).abs - 1.0).clamp01
+
+    private inline val kG = 2.0 / 3.0
+    private inline val kB = 1.0 / 3.0
 
     private inline def smooth(t: Double): Double = t * t * (3.0 - 2.0 * t)
 
@@ -85,32 +97,28 @@ object Color:
       t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
     def hsv2rgbInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
-      val h6 = h * 6.0
-      out.x = v * (1.0 + (hueRamp(h6, 0.0) - 1.0) * s)
-      out.y = v * (1.0 + (hueRamp(h6, 4.0) - 1.0) * s)
-      out.z = v * (1.0 + (hueRamp(h6, 2.0) - 1.0) * s)
+      out.x = v * (1.0 + (hueRamp(h, 0.0) - 1.0) * s)
+      out.y = v * (1.0 + (hueRamp(h, kG) - 1.0) * s)
+      out.z = v * (1.0 + (hueRamp(h, kB) - 1.0) * s)
       out
 
     def hsv2rgbSmoothInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
-      val h6 = h * 6.0
-      out.x = v * (1.0 + (smooth(hueRamp(h6, 0.0)) - 1.0) * s)
-      out.y = v * (1.0 + (smooth(hueRamp(h6, 4.0)) - 1.0) * s)
-      out.z = v * (1.0 + (smooth(hueRamp(h6, 2.0)) - 1.0) * s)
+      out.x = v * (1.0 + (smooth(hueRamp(h, 0.0)) - 1.0) * s)
+      out.y = v * (1.0 + (smooth(hueRamp(h, kG)) - 1.0) * s)
+      out.z = v * (1.0 + (smooth(hueRamp(h, kB)) - 1.0) * s)
       out
 
     def hsv2rgbSmootherInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
-      val h6 = h * 6.0
-      out.x = v * (1.0 + (smoother(hueRamp(h6, 0.0)) - 1.0) * s)
-      out.y = v * (1.0 + (smoother(hueRamp(h6, 4.0)) - 1.0) * s)
-      out.z = v * (1.0 + (smoother(hueRamp(h6, 2.0)) - 1.0) * s)
+      out.x = v * (1.0 + (smoother(hueRamp(h, 0.0)) - 1.0) * s)
+      out.y = v * (1.0 + (smoother(hueRamp(h, kG)) - 1.0) * s)
+      out.z = v * (1.0 + (smoother(hueRamp(h, kB)) - 1.0) * s)
       out
 
     def hsl2rgbInto(h: Double, s: Double, l: Double, out: Vec3): Vec3 =
-      val h6 = h * 6.0
       val chroma = 1.0 - (2.0 * l - 1.0).abs
-      out.x = l + s * (hueRamp(h6, 0.0) - 0.5) * chroma
-      out.y = l + s * (hueRamp(h6, 4.0) - 0.5) * chroma
-      out.z = l + s * (hueRamp(h6, 2.0) - 0.5) * chroma
+      out.x = l + s * (hueRamp(h, 0.0) - 0.5) * chroma
+      out.y = l + s * (hueRamp(h, kG) - 0.5) * chroma
+      out.z = l + s * (hueRamp(h, kB) - 0.5) * chroma
       out
 
     // The WGSL encodes the two orderings of rgb2hsv/rgb2hsl as `mix`/`step`

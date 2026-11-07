@@ -44,6 +44,22 @@ class CpuColorCoordsTest extends FunSuite:
     assertEqualsDouble(b.y, a.y, eps)
     assertEqualsDouble(b.z, a.z, eps)
 
+  test("negative hue wraps like positive"):
+    for h <- Seq(0.1, 0.3, 0.5, 0.7, 0.9) do
+      val pos = Vec3(h, 0.8, 0.9)
+      val neg = Vec3(h - 1.0, 0.8, 0.9)
+      val negTwice = Vec3(h - 2.0, 0.8, 0.9)
+      for (a, b) <- Seq(
+          (pos.hsv2rgb, neg.hsv2rgb),
+          (pos.hsv2rgb, negTwice.hsv2rgb),
+          (pos.hsv2rgbSmooth, neg.hsv2rgbSmooth),
+          (pos.hsl2rgb, neg.hsl2rgb),
+        )
+      do
+        assertEqualsDouble(b.x, a.x, 1e-9)
+        assertEqualsDouble(b.y, a.y, 1e-9)
+        assertEqualsDouble(b.z, a.z, 1e-9)
+
   test("rgb2hsv inverts hsv2rgb"):
     val samples = Seq(
       Vec3(0.0, 1.0, 1.0),

@@ -52,7 +52,7 @@ class RandomTest extends FunSuite:
       i += 1
     assert(t > 0 && t < n)
 
-  test("randNormal01 stays in [0, 1] and centres on 0.5"):
+  test("randNormal01 stays in [0, 1] and centers on 0.5"):
     var sum = 0.0
     var i = 0
     while i < n do
@@ -62,7 +62,7 @@ class RandomTest extends FunSuite:
       i += 1
     assertEqualsDouble(sum / n, 0.5, 0.05)
 
-  test("randNormal11 stays in [-1, 1] and centres on 0"):
+  test("randNormal11 stays in [-1, 1] and centers on 0"):
     var sum = 0.0
     var i = 0
     while i < n do
