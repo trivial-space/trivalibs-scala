@@ -9,18 +9,27 @@ import trivalibs.utils.js.*
 // Winding convention for all polygons: CCW viewed from front.
 
 /** A triangle of three vertices `T` (CCW from the front). A [[Mesh]] [[Face]].
-  * Ops (need a [[Position]]): `.a`/`.b`/`.c`, `.normal`, `.splitByPlane`. */
+  * Ops for any `T`: `.a`/`.b`/`.c`, `.toBufferedGeometry`; with a
+  * [[Position]]: `.normal`, `.splitByPlane`. */
 opaque type Triangle[T] <: Arr[T] = Arr[T]
 
 object Triangle:
   /** A triangle from three vertices, in CCW (front-facing) order. */
   def apply[T](a: T, b: T, c: T): Triangle[T] = Arr(a, b, c)
 
-  extension [T: Position](tri: Triangle[T])
+  extension [T](tri: Triangle[T])
     def a: T = tri(0)
     def b: T = tri(1)
     def c: T = tri(2)
 
+    /** This triangle alone as a [[BufferedGeometry]] (3 vertices, no index
+      * buffer) — see [[facesToBufferedGeometry]]. Needs no [[Position]], so
+      * a `Triangle[Vec2]` works for 2D drawing.
+      */
+    transparent inline def toBufferedGeometry: Any =
+      facesToBufferedGeometry[T](Arr(tri))
+
+  extension [T: Position](tri: Triangle[T])
     def normal: Vec3 =
       val pa = tri.a.pos
       val pb = tri.b.pos
@@ -39,8 +48,9 @@ object Triangle:
 
 // Quad winding: tl(0), bl(1), br(2), tr(3) — CCW viewed from front.
 /** A quad of four vertices `T`, ordered `tl, bl, br, tr` (CCW from the front).
-  * A [[Mesh]] [[Face]]. Ops (need a [[Position]]): `.tl`/`.bl`/`.br`/`.tr`,
-  * `.normal`, `.toTriangles`, and (with [[trivalibs.graphics.math.Lerp]]) `.subdivideH`/`.subdivideV`,
+  * A [[Mesh]] [[Face]]. Ops for any `T`: `.tl`/`.bl`/`.br`/`.tr`,
+  * `.toTriangles`, `.toBufferedGeometry`; with a [[Position]]: `.normal`, and
+  * (plus [[trivalibs.graphics.math.Lerp]]) `.subdivideH`/`.subdivideV`,
   * `.splitByPlane`. Build with [[Quad.apply]] or the `fromDimensions`/
   * `fromCorners` helpers. */
 opaque type Quad[T] <: Arr[T] = Arr[T]
@@ -176,12 +186,26 @@ object Quad:
       case _           => (a, b, c, a + c - b) // TopRight: a=tl b=bl c=br
     fromCorners(tl, bl, br, tr)(f)
 
-  extension [T: Position](q: Quad[T])
+  extension [T](q: Quad[T])
     def tl: T = q(0)
     def bl: T = q(1)
     def br: T = q(2)
     def tr: T = q(3)
 
+    def toTriangles: (Triangle[T], Triangle[T]) =
+      (Triangle(q.tl, q.bl, q.br), Triangle(q.tl, q.br, q.tr))
+
+    /** This quad alone as a [[BufferedGeometry]] (4 vertices, indexed as two
+      * triangles) — see [[facesToBufferedGeometry]]. Needs no [[Position]],
+      * so a `Quad[Vec2]` works for 2D drawing:
+      * {{{
+      * painter.form(geometry = quad.toBufferedGeometry)
+      * }}}
+      */
+    transparent inline def toBufferedGeometry: Any =
+      facesToBufferedGeometry[T](Arr(q))
+
+  extension [T: Position](q: Quad[T])
     // Both-diagonals cross product handles non-planar quads.
     def normal: Vec3 =
       val a = q.tl.pos
@@ -191,9 +215,6 @@ object Quad:
       val d1 = Vec3(c.x - a.x, c.y - a.y, c.z - a.z) // tl→br
       val d2 = Vec3(d.x - b.x, d.y - b.y, d.z - b.z) // bl→tr
       d1.cross(d2).normalize
-
-    def toTriangles: (Triangle[T], Triangle[T]) =
-      (Triangle(q.tl, q.bl, q.br), Triangle(q.tl, q.br, q.tr))
 
   extension [T: {Position, Lerp}](q: Quad[T])
     // Horizontal split: bottom half and top half.

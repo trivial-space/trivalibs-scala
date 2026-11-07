@@ -3,6 +3,7 @@ package trivalibs.graphics.geometry
 import munit.FunSuite
 import trivalibs.bufferdata.F32
 import trivalibs.bufferdata.StructRef
+import trivalibs.graphics.math.cpu.Vec2
 import trivalibs.graphics.math.cpu.Vec3
 import trivalibs.graphics.math.cpu.given
 import trivalibs.utils.js.*
@@ -41,6 +42,42 @@ class BuffersTest extends FunSuite:
     val m = new Mesh[Vec3]()
     m.addFace(Quad(Vec3(0, 1, 0), Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0)))
     m
+
+  // ---------------------------------------------------------------------------
+  // Plain faces, no Mesh / Position (2D)
+  // ---------------------------------------------------------------------------
+
+  test("Quad[Vec2] corners need no Position"):
+    val q = Quad(Vec2(0, 1), Vec2(0, 0), Vec2(1, 0), Vec2(1, 1))
+    assertEquals((q.tl.y, q.bl.y, q.br.x, q.tr.x), (1.0, 0.0, 1.0, 1.0))
+    val (t1, t2) = q.toTriangles
+    assertEquals((t1.a.y, t1.c.x, t2.b.x, t2.c.y), (1.0, 1.0, 1.0, 1.0))
+
+  test("Quad[Vec2].toBufferedGeometry: 4 vertices, indices 0-1-2 0-2-3"):
+    val q = Quad(Vec2(0, 1), Vec2(0, 0), Vec2(1, 0), Vec2(1, 1))
+    val bg = q.toBufferedGeometry
+    assertEquals(bg.vertices.length, 4)
+    val br = bg.vertices(2)(0)
+    assertEquals((br.getAt(0).toDouble, br.getAt(1).toDouble), (1.0, 0.0))
+    val indices = bg.indices
+    assert(indices != null)
+    val ui = indices.asInstanceOf[scala.scalajs.js.typedarray.Uint16Array]
+    assertEquals(ui.toArray.toList, List(0, 1, 2, 0, 2, 3))
+
+  test("Triangle[Vec2].toBufferedGeometry: 3 vertices, no index buffer"):
+    val bg = Triangle(Vec2(0, 0), Vec2(1, 0), Vec2(0, 1)).toBufferedGeometry
+    assertEquals(bg.vertices.length, 3)
+    assert(bg.indices == null)
+
+  test("facesToBufferedGeometry: many quads in one geometry"):
+    val quads = Arr(
+      Quad(Vec2(0, 1), Vec2(0, 0), Vec2(1, 0), Vec2(1, 1)),
+      Quad(Vec2(2, 1), Vec2(2, 0), Vec2(3, 0), Vec2(3, 1)),
+    )
+    val bg = facesToBufferedGeometry(quads)
+    assertEquals(bg.vertices.length, 8)
+    val ui = bg.indices.asInstanceOf[scala.scalajs.js.typedarray.Uint16Array]
+    assertEquals(ui.toArray.toList.drop(6), List(4, 5, 6, 4, 6, 7))
 
   // ---------------------------------------------------------------------------
   // FaceVertices

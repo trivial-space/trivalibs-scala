@@ -208,11 +208,22 @@ transparent inline def buildFaceVertices[T: Position, F <: Tuple](
     mesh: Mesh[T],
     write: WriteOne[T, F],
 ): BufferedGeometry[F] =
+  buildFaceList[T, F](mesh.faces.asInstanceOf[Arr[Arr[T]]], write)
+
+/** The [[MeshBufferType.FaceVertices]] strategy over a plain face list — no
+  * [[Mesh]], so no [[Position]] needed. One vertex per face corner; triangles
+  * only → no index buffer, any quad → every face indexed (a quad as two
+  * triangles `0-1-2`, `0-2-3`).
+  */
+transparent inline def buildFaceList[T, F <: Tuple](
+    faces: Arr[? <: Arr[T]],
+    write: WriteOne[T, F],
+): BufferedGeometry[F] =
   var vertexCount = 0
   var hasQuads = false
   var fi = 0
-  while fi < mesh.faces.length do
-    val n = mesh.faces(fi).asInstanceOf[Arr[T]].length
+  while fi < faces.length do
+    val n = faces(fi).length
     vertexCount += n
     if n == 4 then hasQuads = true
     fi += 1
@@ -222,8 +233,8 @@ transparent inline def buildFaceVertices[T: Position, F <: Tuple](
 
   if !hasQuads then
     fi = 0
-    while fi < mesh.faces.length do
-      val arr = mesh.faces(fi).asInstanceOf[Arr[T]]
+    while fi < faces.length do
+      val arr = faces(fi)
       var si = 0
       while si < arr.length do
         write(arr(si), verts(vi))
@@ -235,8 +246,8 @@ transparent inline def buildFaceVertices[T: Position, F <: Tuple](
     val idxBuf = Arr[Int]()
     var base = 0
     fi = 0
-    while fi < mesh.faces.length do
-      val arr = mesh.faces(fi).asInstanceOf[Arr[T]]
+    while fi < faces.length do
+      val arr = faces(fi)
       val n = arr.length
       var si = 0
       while si < n do
@@ -250,6 +261,24 @@ transparent inline def buildFaceVertices[T: Position, F <: Tuple](
       base += n
       fi += 1
     BufferedGeometry(verts, makeIndexArray(idxBuf, vertexCount))
+
+/** Triangulate a list of [[Quad]]s / [[Triangle]]s straight into a
+  * [[BufferedGeometry]] for `painter.form(geometry = …)` — the
+  * [[MeshBufferType.FaceVertices]] layout, without a [[Mesh]]. Unlike
+  * [[toBufferedGeometry]] the vertex type needs no [[Position]]: anything with
+  * a vertex layout works, including a bare `Vec2` for 2D drawing. For a single
+  * face use `quad.toBufferedGeometry` / `triangle.toBufferedGeometry`.
+  * {{{
+  * val quads: Arr[Quad[Vec2]] = …
+  * val form = painter.form(geometry = facesToBufferedGeometry(quads))
+  * }}}
+  */
+transparent inline def facesToBufferedGeometry[T](faces: Arr[? <: Arr[T]]): Any =
+  summonFrom:
+    case vl: VertexLayout[T, f] =>
+      val write: WriteOne[T, f] =
+        (v, ref) => ref.set(vl.value(v).asInstanceOf[ValueTuple[f]])
+      buildFaceList[T, f](faces, write)
 
 transparent inline def buildFaceVerticesWithFaceNormal[T: Position, F <: Tuple](
     mesh: Mesh[T],
