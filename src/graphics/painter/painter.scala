@@ -303,6 +303,12 @@ class Painter private[painter] (
     * `AddressMode.Repeat` to seamlessly tile a repeat-sampled texture; it
     * applies to both U and V unless overridden per axis by `addressModeU` /
     * `addressModeV` (when given, those take precedence over `addressMode`).
+    *
+    * `maxAnisotropy` (1–16, default 1 = off) enables anisotropic filtering:
+    * surfaces seen at a grazing angle — a floor, a long wall — pick their mip
+    * from the short axis of the pixel footprint instead of the long one, so
+    * they stay sharp much further out. WebGPU requires all three filters to be
+    * `Linear` when it is above 1; anything else is a validation error.
     */
   def sampler(
       magFilter: FilterMode = FilterMode.Nearest,
@@ -311,6 +317,7 @@ class Painter private[painter] (
       addressMode: AddressMode = AddressMode.ClampToEdge,
       addressModeU: Maybe[AddressMode] = Maybe.Not,
       addressModeV: Maybe[AddressMode] = Maybe.Not,
+      maxAnisotropy: Int = 1,
   ): GPUSampler =
     device.createSampler(
       Obj.literal(
@@ -319,6 +326,7 @@ class Painter private[painter] (
         mipmapFilter = mipmapFilter.toJs,
         addressModeU = addressModeU.getOr(addressMode).toJs,
         addressModeV = addressModeV.getOr(addressMode).toJs,
+        maxAnisotropy = maxAnisotropy,
       ),
     )
 
