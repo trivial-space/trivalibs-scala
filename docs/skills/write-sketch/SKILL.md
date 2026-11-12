@@ -89,7 +89,9 @@ mutators are `set(...)` / `bind(...)` / `instances`:
   pass
 - `p.panel(shape=/shapes=, layer=/layers=, clearColor=, format=, mips=, depthTest=, multisample=)`
 - `p.binding[T]` / `p.binding(init)`; update `b.set(v)` / `b := v`
-- `p.samplerLinear` / `p.samplerNearest` / `p.sampler(...)`
+- `p.samplerLinear` / `p.samplerNearest` / `p.sampler(...)`;
+  `p.samplerLinear(maxAnisotropy, addressMode=)` — a new linear sampler with
+  anisotropy
 - `p.paint(panels*)` then `p.show(panel)` (or `p.paintAndShow`);
   `p.draw(shape, clearColor)`
 - `panel.binding(index=, mipLevel=, depth=)` to bind one panel texture view

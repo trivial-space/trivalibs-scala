@@ -106,12 +106,7 @@ def main(): Unit =
     quad(5).set1(0.0, 0.0)
 
     val mvp = p.binding[Mat4]
-    val sampler = p.sampler(
-      FilterMode.Linear,
-      FilterMode.Linear,
-      FilterMode.Linear,
-      maxAnisotropy = 16,
-    )
+    val sampler = p.samplerLinear(maxAnisotropy = 16)
 
     val canvasPanel = p.panel(
       clearColor = (0.1, 0.1, 0.14, 1.0),

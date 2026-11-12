@@ -338,11 +338,28 @@ class Painter private[painter] (
   /** Shared linear-filter sampler. Pass directly as a binding value (`"samp" :=
     * painter.samplerLinear`).
     */
-  lazy val samplerLinear: GPUSampler = sampler(
-    magFilter = FilterMode.Linear,
-    minFilter = FilterMode.Linear,
-    mipmapFilter = FilterMode.Linear,
-  )
+  def samplerLinear: GPUSampler = sharedLinearSampler
+
+  /** A new linear-filter sampler (mag, min and mip filters all `Linear`) with
+    * anisotropic filtering and address modes — the configuration WebGPU
+    * requires for `maxAnisotropy` above 1. Each call creates a sampler: keep it
+    * in a `val`. See [[sampler]] for the parameters.
+    */
+  def samplerLinear(
+      maxAnisotropy: Int,
+      addressMode: AddressMode = AddressMode.ClampToEdge,
+      addressModeU: Maybe[AddressMode] = Maybe.Not,
+      addressModeV: Maybe[AddressMode] = Maybe.Not,
+  ): GPUSampler =
+    sampler(
+      FilterMode.Linear,
+      FilterMode.Linear,
+      FilterMode.Linear,
+      addressMode,
+      addressModeU,
+      addressModeV,
+      maxAnisotropy,
+    )
 
   // =========================================================================
   // Shade factory
@@ -1907,6 +1924,8 @@ class Painter private[painter] (
     pass.setBindGroup(0, group)
     pass.draw(3)
     pass.end()
+
+  private lazy val sharedLinearSampler: GPUSampler = samplerLinear(1)
 
   // A shade without uniforms still declares its panels at group 1, so its
   // pipeline layout needs an empty group 0, and its draws bind an empty group.
