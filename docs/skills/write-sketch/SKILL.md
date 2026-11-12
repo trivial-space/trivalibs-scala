@@ -93,6 +93,8 @@ mutators are `set(...)` / `bind(...)` / `instances`:
 - `p.paint(panels*)` then `p.show(panel)` (or `p.paintAndShow`);
   `p.draw(shape, clearColor)`
 - `panel.binding(index=, mipLevel=, depth=)` to bind one panel texture view
+- `panel.freeze()` after the `paint` of a one-shot panel — frees MSAA, pong and
+  unsampled depth; painting it again throws
 
 ## Gotchas (see gotchas.md for the full list)
 

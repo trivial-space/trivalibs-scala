@@ -451,10 +451,7 @@ class Painter private[painter] (
         val module = device.createShaderModule(Obj.literal(code = wgsl))
         val vbl = sd.vertexBufferLayout
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
-        val bgls =
-          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
-          else Arr[GPUBindGroupLayout]()
-        val pl = layouts.createPipelineLayout(device, bgls)
+        val pl = layouts.createPipelineLayout(device, uniformlessLayouts(panelBgl))
         Shade[U, P](
           id,
           module,
@@ -523,10 +520,7 @@ class Painter private[painter] (
         val module = device.createShaderModule(Obj.literal(code = wgsl))
         val vbl = sd.vertexBufferLayout
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
-        val bgls =
-          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
-          else Arr[GPUBindGroupLayout]()
-        val pl = layouts.createPipelineLayout(device, bgls)
+        val pl = layouts.createPipelineLayout(device, uniformlessLayouts(panelBgl))
         Shade[U, P](
           id,
           module,
@@ -657,10 +651,7 @@ class Painter private[painter] (
         log(wgsl)
         val module = device.createShaderModule(Obj.literal(code = wgsl))
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
-        val bgls =
-          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
-          else Arr[GPUBindGroupLayout]()
-        val pl = layouts.createPipelineLayout(device, bgls)
+        val pl = layouts.createPipelineLayout(device, uniformlessLayouts(panelBgl))
         Shade[U, P](
           id,
           module,
@@ -735,10 +726,7 @@ class Painter private[painter] (
         log(wgsl)
         val module = device.createShaderModule(Obj.literal(code = wgsl))
         val panelBgl = layouts.createPanelBindGroupLayout[P](device)
-        val bgls =
-          if panelBgl != null then Arr[GPUBindGroupLayout](panelBgl)
-          else Arr[GPUBindGroupLayout]()
-        val pl = layouts.createPipelineLayout(device, bgls)
+        val pl = layouts.createPipelineLayout(device, uniformlessLayouts(panelBgl))
         Shade[U, P](
           id,
           module,
@@ -1237,6 +1225,7 @@ class Painter private[painter] (
   // =========================================================================
 
   private def paintPanel(panel: Panel): Unit =
+    if panel.frozen then throw jsError("Painter.paint: the panel is frozen")
     panel.ensureSize(width.toInt, height.toInt)
     // Its content was produced by `set`.
     if panel.sourceOnly then return
@@ -1644,6 +1633,8 @@ class Painter private[painter] (
     if runtime != null then
       val vg = buildValueBindGroup(shade, x.bindings, inst, runtime)
       if vg != null then pass.setBindGroup(0, vg)
+      else if shade.panelBindGroupLayout != null then
+        pass.setBindGroup(0, emptyBindGroup)
       val pg = buildPanelBindGroup(
         shade,
         x.panelBindings,
@@ -1667,6 +1658,8 @@ class Painter private[painter] (
         c.valueParentVersion = parentVersion
       val vg = c.valueGroup
       if vg != null then pass.setBindGroup(0, vg)
+      else if shade.panelBindGroupLayout != null then
+        pass.setBindGroup(0, emptyBindGroup)
 
       if c.panelVersion != ownVersion || c.panelParentVersion != parentVersion ||
         !panelViewsCurrent(c, srcView)
@@ -1914,6 +1907,22 @@ class Painter private[painter] (
     pass.setBindGroup(0, group)
     pass.draw(3)
     pass.end()
+
+  // A shade without uniforms still declares its panels at group 1, so its
+  // pipeline layout needs an empty group 0, and its draws bind an empty group.
+  private lazy val emptyBindGroupLayout: GPUBindGroupLayout =
+    device.createBindGroupLayout(Obj.literal(entries = Arr[js.Dynamic]()))
+
+  private lazy val emptyBindGroup: GPUBindGroup =
+    device.createBindGroup(
+      Obj.literal(layout = emptyBindGroupLayout, entries = Arr[js.Dynamic]()),
+    )
+
+  private def uniformlessLayouts(
+      panelBgl: Opt[GPUBindGroupLayout],
+  ): Arr[GPUBindGroupLayout] =
+    if panelBgl != null then Arr(emptyBindGroupLayout, panelBgl)
+    else Arr[GPUBindGroupLayout]()
 
   private lazy val blitSampler: GPUSampler =
     device.createSampler(

@@ -97,7 +97,7 @@ class Panel private[painter] (val painter: Painter):
     * destroys a texture or view must call [[viewsChanged]]. A missed call fails
     * silently: cached bind groups keep sampling the stale or destroyed texture.
     * Current call sites: `swapPair`, `reallocate`, `allocDepth`,
-    * `adoptSlot0AsSource`.
+    * `adoptSlot0AsSource`, `freeze`.
     */
   private[painter] var bindEpoch: Int = 0
 
@@ -126,6 +126,9 @@ class Panel private[painter] (val painter: Painter):
   // Raised by `set` when a property that shapes the allocation changes; the
   // next `ensureSize` reallocates even at an unchanged size.
   private var needsRealloc: Boolean = false
+  // Set by `freeze`: only the sampleable textures remain, and painting or
+  // reconfiguring throws.
+  private[painter] var frozen: Boolean = false
 
   // The texture source: its intrinsic size, the format of its pixels, and
   // where those pixels live. On the direct path they are in
@@ -271,10 +274,15 @@ class Panel private[painter] (val painter: Painter):
   // a multisample panel that also allocates the single-sample resolve texture
   // (filled by `Painter.resolvePanelDepth` each frame) and we hand that back.
   private[painter] def depthSamplingView: GPUTextureView =
+    if frozen && !depthSamplable then
+      throw jsError(
+        "Panel: a frozen panel keeps its depth only if it was sampled before " +
+          "freeze(). Bind binding(depth = true) before freezing.",
+      )
     if !depthSamplable && depthTexture != null then
       depthSamplable = true
       allocDepth()
-    if depthResolvePending then resolvedDepthView.get
+    if resolvedDepthView != null then resolvedDepthView.get
     else depthAttachmentView.get
 
   /** Make a [[PanelBinding]] selecting one view of this panel to feed another
@@ -323,6 +331,7 @@ class Panel private[painter] (val painter: Painter):
       flipY: Maybe[Boolean] = Maybe.Not,
       premultipliedAlpha: Maybe[Boolean] = Maybe.Not,
   ): this.type =
+    if frozen then throw jsError("Panel.set: the panel is frozen")
     val allocationBefore = allocationKey
     width.foreach(v => this.specWidth = v)
     height.foreach(v => this.specHeight = v)
@@ -378,6 +387,40 @@ class Panel private[painter] (val painter: Painter):
     if sourceOnly then
       ensureSize(0, 0)
       if !directSource then painter.renderPanel(this)
+    this
+
+  /** Keep only what shaders sample, for a panel whose content is final — a
+    * one-shot bake. Frees everything that exists only for painting.
+    *
+    * Stays: every target's color texture with its mips, and the depth if it was
+    * bound with `binding(depth = true)` before the freeze (for a multisample
+    * panel, its resolved single-sample copy). Freed: the MSAA color textures,
+    * the pong scratch, the drawn-path source texture, and any other depth.
+    *
+    * One-way: [[set]] and `paint` throw on a frozen panel, and a surface-sized
+    * panel stops following the surface. Call it right after the `paint` that
+    * produced the content; the GPU frees the textures once that work is done.
+    */
+  def freeze(): this.type =
+    if !frozen then
+      frozen = true
+      var d = 0
+      while d < msaaTextures.length do
+        msaaTextures(d).destroy()
+        d += 1
+      msaaTextures = Arr()
+      msaaViews = Arr()
+      while textures.length > targetCount do
+        textures.pop().destroy()
+        views.pop()
+      val keepDepth = depthSamplable && resolvedDepthTexture == null
+      if depthTexture != null && !keepDepth then
+        depthTexture.get.destroy()
+        depthTexture = null
+        depthAttachmentView = null
+      depthResolvePending = false
+      releaseSourceTexture()
+      viewsChanged()
     this
 
   private inline def processPanelEntry[N <: String & Singleton, V](

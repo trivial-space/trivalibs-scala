@@ -689,7 +689,98 @@ class HeadlessPainterTest extends FunSuite:
       p.paint(reader)
       assert(scene.bindEpoch != beforeDepthUpgrade, "allocDepth")
       p.paint(reader)
-      assertEquals(counter.n, 1)
+      // the panel group, and the painter's shared empty group 0 for a shade
+      // without uniforms
+      assertEquals(counter.n, 2)
       p.paint(scene)
       p.paint(reader)
-      assertEquals(counter.n, 1)
+      assertEquals(counter.n, 2)
+
+  test("a layer without uniforms reads its panels"):
+    val out = PixelImage(4, 3)
+    val src = checker(4, 3)
+    painterOn(out).flatMap: p =>
+      val source = p.panel(source = src)
+      val shade = p.layerShade[EmptyTuple, (src: FragmentPanel)]: program =>
+        program.frag: ctx =>
+          ctx.out.color := ctx.textures.src.load(ivec2(ctx.fragCoord.xy))
+      p.paintAndShow(p.panel(layer = p.layer(shade).bind("src" := source)))
+      p.awaitReadback().toFuture.map(_ => assertEquals(pixels(out), pixels(src)))
+
+  // ---- freeze ----
+
+  private def depthReader(p: Painter, scene: Panel) =
+    val shade = p.layerShade[(scale: Float), (depth: FragmentDepthPanel)]:
+      program =>
+        program.frag: ctx =>
+          val d = ctx.textures.depth.load(ivec2(ctx.fragCoord.xy))
+          ctx.out.color := vec4(d * ctx.bindings.scale, 0.0, 0.0, 1.0)
+    p.panel(
+      layer = p
+        .layer(shade)
+        .bind("scale" := 1.0, "depth" := scene.binding(depth = true)),
+    )
+
+  test("a frozen MSAA panel stays sampleable; paint and set throw"):
+    val out = PixelImage(2, 2)
+    painterOn(out).flatMap: p =>
+      val baked = p.panel(
+        width = 2,
+        height = 2,
+        clearColor = (0.0, 0.0, 0.0, 1.0),
+        multisample = true,
+        mips = true,
+        shape = fullscreenShape(p, Vec3(1.0, 0.0, 0.0)),
+      )
+      p.paint(baked)
+      val beforeFreeze = baked.bindEpoch
+      baked.freeze()
+      assert(baked.bindEpoch != beforeFreeze, "freeze")
+      p.paintAndShow(p.panel(layer = copyLayer(p, baked)))
+      val paintError = intercept[js.JavaScriptException](p.paint(baked))
+      assert(paintError.getMessage.contains("frozen"))
+      val setError = intercept[js.JavaScriptException](baked.set(width = 4))
+      assert(setError.getMessage.contains("frozen"))
+      p.awaitReadback().toFuture.map: _ =>
+        assertEquals(pixels(out).take(4), Seq(255.0, 0.0, 0.0, 255.0))
+
+  test("a frozen pong panel keeps its result"):
+    val out = PixelImage(4, 3)
+    val src = checker(4, 3)
+    painterOn(out).flatMap: p =>
+      val pong = p.panel(source = src, layer = invertLayer(p))
+      p.paint(pong)
+      pong.freeze()
+      p.paintAndShow(p.panel(layer = copyLayer(p, pong)))
+      p.awaitReadback().toFuture.map(_ => assertEquals(pixels(out), inverted(src)))
+
+  test("depth sampled before freeze survives it, with MSAA"):
+    val out = PixelImage(2, 2)
+    painterOn(out).flatMap: p =>
+      val scene = p.panel(
+        depthTest = true,
+        multisample = true,
+        clearColor = (0.0, 0.0, 0.0, 1.0),
+        shape = fullscreenShape(p, Vec3(1.0, 0.0, 0.0)),
+      )
+      val reader = depthReader(p, scene)
+      p.paint(scene)
+      p.paint(reader)
+      p.paint(scene)
+      scene.freeze()
+      p.paintAndShow(reader)
+      p.awaitReadback().toFuture.map: _ =>
+        assertEqualsDouble(channel(out, 1, 1, 0), 128.0, 1.0)
+
+  test("depth bound only after freeze throws"):
+    painterOn(PixelImage(2, 2)).map: p =>
+      val scene = p.panel(
+        depthTest = true,
+        clearColor = (0.0, 0.0, 0.0, 1.0),
+        shape = fullscreenShape(p, Vec3(1.0, 0.0, 0.0)),
+      )
+      p.paint(scene)
+      scene.freeze()
+      val error = intercept[js.JavaScriptException]:
+        p.paint(depthReader(p, scene))
+      assert(error.getMessage.contains("frozen"))

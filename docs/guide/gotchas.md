@@ -130,6 +130,18 @@ after the shapes) and hands that back, so you still read a plain
 `texture_depth_2d` — no special handling needed (it uses subsample 0, which is
 fine for depth-driven effects like fog/DOF).
 
+### Freeze one-shot panels: MSAA and scratch textures outlive the paint
+
+A panel keeps every texture it paints with for as long as it lives: the 4× MSAA
+buffer of a `multisample = true` panel (four times the size of its color
+texture), the pong scratch, an unsampled depth. For a panel painted once — a
+bake sampled for the rest of the run — that is dead weight, and with many such
+panels it is what runs a mobile GPU out of memory. Call `panel.freeze()` right
+after its `paint`: only the sampled color textures with their mips stay, plus
+the depth if `binding(depth = true)` was bound **before** the freeze. A frozen
+panel is final — `paint` and `set` throw, and it no longer follows the surface
+size.
+
 ### `paint` order matters; `show` presents
 
 `paint(a, b, c)` renders in order — list panels so a panel that samples another
