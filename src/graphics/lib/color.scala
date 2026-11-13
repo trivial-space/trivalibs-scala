@@ -63,6 +63,21 @@ extension [C <: Vec3 | Vec3Expr](c: C)
     case _: Vec3 => Color.hsl2rgb(c.asInstanceOf[Vec3])
     case _: Vec3Expr => GpuColor.hsl2rgb(c.asInstanceOf[Vec3Expr])
 
+  /** HSL → RGB with a cubic smoothstep on the ramp, as [[hsv2rgbSmooth]]. Hue
+    * may be any value; it wraps internally.
+    */
+  transparent inline def hsl2rgbSmooth: Vec3 | Vec3Expr = inline erasedValue[C] match
+    case _: Vec3 => Color.hsl2rgbSmooth(c.asInstanceOf[Vec3])
+    case _: Vec3Expr => GpuColor.hsl2rgbSmooth(c.asInstanceOf[Vec3Expr])
+
+  /** HSL → RGB with a quintic smootherstep on the ramp, as
+    * [[hsv2rgbSmoother]]. Hue may be any value; it wraps internally.
+    */
+  transparent inline def hsl2rgbSmoother: Vec3 | Vec3Expr =
+    inline erasedValue[C] match
+      case _: Vec3 => Color.hsl2rgbSmoother(c.asInstanceOf[Vec3])
+      case _: Vec3Expr => GpuColor.hsl2rgbSmoother(c.asInstanceOf[Vec3Expr])
+
 /** Color conversions on the CPU — same names and formulation as the GPU
   * `Color`. Everything here is `inline` over the scalar [[kernel]]s, which
   * also come in `…Into(out)` forms for hot loops.
@@ -77,6 +92,10 @@ object Color:
   inline def hsv2rgbSmoother(c: Vec3): Vec3 =
     kernel.hsv2rgbSmootherInto(c.x, c.y, c.z, new Vec3())
   inline def hsl2rgb(c: Vec3): Vec3 = kernel.hsl2rgbInto(c.x, c.y, c.z, new Vec3())
+  inline def hsl2rgbSmooth(c: Vec3): Vec3 =
+    kernel.hsl2rgbSmoothInto(c.x, c.y, c.z, new Vec3())
+  inline def hsl2rgbSmoother(c: Vec3): Vec3 =
+    kernel.hsl2rgbSmootherInto(c.x, c.y, c.z, new Vec3())
 
   /** Scalar kernels writing the result into `out` and returning it. */
   object kernel:
@@ -96,30 +115,52 @@ object Color:
     private inline def smoother(t: Double): Double =
       t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 
-    def hsv2rgbInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
-      out.x = v * (1.0 + (hueRamp(h, 0.0) - 1.0) * s)
-      out.y = v * (1.0 + (hueRamp(h, kG) - 1.0) * s)
-      out.z = v * (1.0 + (hueRamp(h, kB) - 1.0) * s)
+    private inline def linear(t: Double): Double = t
+
+    // The hsv / hsl formulas over a shaped hue ramp. `shape` is an inline
+    // parameter, so each kernel below compiles to plain scalar math.
+    private inline def fromHsv(
+        h: Double,
+        s: Double,
+        v: Double,
+        out: Vec3,
+        inline shape: Double => Double,
+    ): Vec3 =
+      out.x = v * (1.0 + (shape(hueRamp(h, 0.0)) - 1.0) * s)
+      out.y = v * (1.0 + (shape(hueRamp(h, kG)) - 1.0) * s)
+      out.z = v * (1.0 + (shape(hueRamp(h, kB)) - 1.0) * s)
       out
+
+    private inline def fromHsl(
+        h: Double,
+        s: Double,
+        l: Double,
+        out: Vec3,
+        inline shape: Double => Double,
+    ): Vec3 =
+      val chroma = 1.0 - (2.0 * l - 1.0).abs
+      out.x = l + s * (shape(hueRamp(h, 0.0)) - 0.5) * chroma
+      out.y = l + s * (shape(hueRamp(h, kG)) - 0.5) * chroma
+      out.z = l + s * (shape(hueRamp(h, kB)) - 0.5) * chroma
+      out
+
+    def hsv2rgbInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
+      fromHsv(h, s, v, out, linear)
 
     def hsv2rgbSmoothInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
-      out.x = v * (1.0 + (smooth(hueRamp(h, 0.0)) - 1.0) * s)
-      out.y = v * (1.0 + (smooth(hueRamp(h, kG)) - 1.0) * s)
-      out.z = v * (1.0 + (smooth(hueRamp(h, kB)) - 1.0) * s)
-      out
+      fromHsv(h, s, v, out, smooth)
 
     def hsv2rgbSmootherInto(h: Double, s: Double, v: Double, out: Vec3): Vec3 =
-      out.x = v * (1.0 + (smoother(hueRamp(h, 0.0)) - 1.0) * s)
-      out.y = v * (1.0 + (smoother(hueRamp(h, kG)) - 1.0) * s)
-      out.z = v * (1.0 + (smoother(hueRamp(h, kB)) - 1.0) * s)
-      out
+      fromHsv(h, s, v, out, smoother)
 
     def hsl2rgbInto(h: Double, s: Double, l: Double, out: Vec3): Vec3 =
-      val chroma = 1.0 - (2.0 * l - 1.0).abs
-      out.x = l + s * (hueRamp(h, 0.0) - 0.5) * chroma
-      out.y = l + s * (hueRamp(h, kG) - 0.5) * chroma
-      out.z = l + s * (hueRamp(h, kB) - 0.5) * chroma
-      out
+      fromHsl(h, s, l, out, linear)
+
+    def hsl2rgbSmoothInto(h: Double, s: Double, l: Double, out: Vec3): Vec3 =
+      fromHsl(h, s, l, out, smooth)
+
+    def hsl2rgbSmootherInto(h: Double, s: Double, l: Double, out: Vec3): Vec3 =
+      fromHsl(h, s, l, out, smoother)
 
     // The WGSL encodes the two orderings of rgb2hsv/rgb2hsl as `mix`/`step`
     // over a vec4; on the CPU the same two branches are cheaper and clearer.

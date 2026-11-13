@@ -51,6 +51,16 @@ object Color:
   /** HSL → RGB. Any hue; wrapped internally. */
   inline def hsl2rgb(c: Vec3Expr): Vec3Expr = wgsl.hsl2rgb(c)
 
+  /** HSL → RGB with a cubic smoothstep on the ramp. Any hue; wrapped
+    * internally.
+    */
+  inline def hsl2rgbSmooth(c: Vec3Expr): Vec3Expr = wgsl.hsl2rgbSmooth(c)
+
+  /** HSL → RGB with a quintic smootherstep on the ramp. Any hue; wrapped
+    * internally.
+    */
+  inline def hsl2rgbSmoother(c: Vec3Expr): Vec3Expr = wgsl.hsl2rgbSmoother(c)
+
   /** The WgslFn definitions — the layer for `.withDeps` and raw WGSL
     * composition (`hsv2rgb` emits `color_hsv2rgb`).
     */
@@ -94,42 +104,55 @@ object Color:
     return vec3<f32>(h, s, l);"""
 
     // ---------------------------------------------------------------------------
+    // Hue ramp — shared by the hsv and hsl conversions, assembled at build time
+    // so every emitted fn stays self-contained. A ramp leaves the per-channel
+    // shaped hue ramp in `rgb`; `fromHsv` / `fromHsl` apply the third channel.
+    // ---------------------------------------------------------------------------
+
+    private val hueRamp =
+      """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
+    let t = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));"""
+
+    private val linearRamp = s"$hueRamp\n    let rgb = t;"
+
+    private val smoothRamp =
+      s"$hueRamp\n    let rgb = t * t * (vec3<f32>(3.0) - 2.0 * t);"
+
+    private val smootherRamp =
+      s"$hueRamp\n    let rgb = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);"
+
+    private def fromHsv(ramp: String): String =
+      s"$ramp\n    return c.z * mix(vec3<f32>(1.0), rgb, c.y);"
+
+    private def fromHsl(ramp: String): String =
+      s"$ramp\n    return c.z + c.y * (rgb - 0.5) * (1.0 - abs(2.0 * c.z - 1.0));"
+
+    // ---------------------------------------------------------------------------
     // HSV → RGB (Iñigo Quilez piecewise-linear, plus smoothed variants)
     // ---------------------------------------------------------------------------
 
     /** HSV → RGB (Iñigo Quilez piecewise-linear). Input `(hue, saturation,
       * value)`: saturation and value in [0, 1], hue any value (wrapped via
-      * `fract`); output RGB in [0, 1]. Cheapest of the four hsv→rgb
-      * variants — visible color-band edges where the ramp changes slope.
+      * `fract`); output RGB in [0, 1]. Cheapest of the hsv→rgb variants —
+      * visible color-band edges where the ramp changes slope.
       */
     lazy val hsv2rgb: WgslFn[(c: Vec3), Vec3] =
-      WgslFn.raw("color_hsv2rgb"):
-        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
-    let rgb = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
-    return c.z * mix(vec3<f32>(1.0), rgb, c.y);"""
+      WgslFn.raw("color_hsv2rgb")(fromHsv(linearRamp))
 
     /** HSV → RGB with cubic smoothstep on the rgb ramp (`t·t·(3 − 2·t)`). Removes
       * the slope discontinuities of [[hsv2rgb]] for ~free.
       */
     lazy val hsv2rgbSmooth: WgslFn[(c: Vec3), Vec3] =
-      WgslFn.raw("color_hsv2rgb_smooth"):
-        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
-    let t = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
-    let rgb = t * t * (vec3<f32>(3.0) - 2.0 * t);
-    return c.z * mix(vec3<f32>(1.0), rgb, c.y);"""
+      WgslFn.raw("color_hsv2rgb_smooth")(fromHsv(smoothRamp))
 
     /** HSV → RGB with quintic smootherstep (`t³·(t·(t·6 − 15) + 10)`). Smoother
       * than [[hsv2rgbSmooth]] at second-derivative-continuous cost.
       */
     lazy val hsv2rgbSmoother: WgslFn[(c: Vec3), Vec3] =
-      WgslFn.raw("color_hsv2rgb_smoother"):
-        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
-    let t = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
-    let rgb = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-    return c.z * mix(vec3<f32>(1.0), rgb, c.y);"""
+      WgslFn.raw("color_hsv2rgb_smoother")(fromHsv(smootherRamp))
 
     // ---------------------------------------------------------------------------
-    // HSL → RGB
+    // HSL → RGB (same ramp and smoothed variants as HSV)
     // ---------------------------------------------------------------------------
 
     /** HSL → RGB. Input `(hue, saturation, lightness)`: saturation and
@@ -141,7 +164,14 @@ object Color:
       * the fully-saturated hue is at `V = 1`.
       */
     lazy val hsl2rgb: WgslFn[(c: Vec3), Vec3] =
-      WgslFn.raw("color_hsl2rgb"):
-        """  let h = fract(c.x + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0;
-    let rgb = clamp(abs(h - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
-    return c.z + c.y * (rgb - 0.5) * (1.0 - abs(2.0 * c.z - 1.0));"""
+      WgslFn.raw("color_hsl2rgb")(fromHsl(linearRamp))
+
+    /** HSL → RGB with cubic smoothstep on the rgb ramp, as [[hsv2rgbSmooth]]. */
+    lazy val hsl2rgbSmooth: WgslFn[(c: Vec3), Vec3] =
+      WgslFn.raw("color_hsl2rgb_smooth")(fromHsl(smoothRamp))
+
+    /** HSL → RGB with quintic smootherstep on the rgb ramp, as
+      * [[hsv2rgbSmoother]].
+      */
+    lazy val hsl2rgbSmoother: WgslFn[(c: Vec3), Vec3] =
+      WgslFn.raw("color_hsl2rgb_smoother")(fromHsl(smootherRamp))

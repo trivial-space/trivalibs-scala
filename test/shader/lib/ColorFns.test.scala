@@ -43,6 +43,19 @@ class ColorFnsTest extends FunSuite:
     assert(data.src.contains("fn color_hsv2rgb_smoother(c: vec3<f32>)"), data.src)
     assert(data.src.contains("t * (t * 6.0 - 15.0) + 10.0"), data.src)
 
+  test("hsl2rgbSmooth / Smoother share the hsv ramp shaping"):
+    val smooth = Color.wgsl.hsl2rgbSmooth.asInstanceOf[WgslFnData]
+    val smoother = Color.wgsl.hsl2rgbSmoother.asInstanceOf[WgslFnData]
+    assert(smooth.src.contains("fn color_hsl2rgb_smooth(c: vec3<f32>)"))
+    assert(smoother.src.contains("fn color_hsl2rgb_smoother(c: vec3<f32>)"))
+    assert(smooth.src.contains("t * t * (vec3<f32>(3.0) - 2.0 * t)"), smooth.src)
+    assert(smoother.src.contains("t * (t * 6.0 - 15.0) + 10.0"), smoother.src)
+    for data <- Seq(smooth, smoother) do
+      assert(
+        data.src.contains("c.z + c.y * (rgb - 0.5) * (1.0 - abs(2.0 * c.z - 1.0))"),
+        data.src,
+      )
+
   test("hsl2rgb scales chroma by 1 - |2L - 1|"):
     val data = Color.wgsl.hsl2rgb.asInstanceOf[WgslFnData]
     assert(data.src.contains("fn color_hsl2rgb(c: vec3<f32>)"), data.src)

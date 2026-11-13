@@ -110,6 +110,47 @@ class CpuColorCoordsTest extends FunSuite:
       assertEqualsDouble(c.y, 0.0, 1e-9)
       assertEqualsDouble(c.z, 0.0, 1e-9)
 
+  test("smoothed hsl variants keep the hsl anchors"):
+    for (lightness, expected) <- Seq(
+        (0.0, Vec3(0.0, 0.0, 0.0)),
+        (1.0, Vec3(1.0, 1.0, 1.0)),
+        (0.5, Vec3(1.0, 0.0, 0.0)),
+      )
+    do
+      val hsl = Vec3(0.0, 1.0, lightness)
+      for c <- Seq(hsl.hsl2rgb, hsl.hsl2rgbSmooth, hsl.hsl2rgbSmoother) do
+        assertEqualsDouble(c.x, expected.x, 1e-9)
+        assertEqualsDouble(c.y, expected.y, 1e-9)
+        assertEqualsDouble(c.z, expected.z, 1e-9)
+
+  test("smoothed hsl variants shape the ramp like the hsv ones"):
+    // mid-ramp hue: linear ramp 0.5, smoothstep 0.5, but at a quarter the
+    // shaped ramps diverge — compare each hsl variant against its hsv twin
+    val h = 1.0 / 24.0
+    val pairs = Seq(
+      (Vec3(h, 1.0, 0.5).hsl2rgb, Vec3(h, 1.0, 1.0).hsv2rgb),
+      (Vec3(h, 1.0, 0.5).hsl2rgbSmooth, Vec3(h, 1.0, 1.0).hsv2rgbSmooth),
+      (Vec3(h, 1.0, 0.5).hsl2rgbSmoother, Vec3(h, 1.0, 1.0).hsv2rgbSmoother),
+    )
+    for (hsl, hsv) <- pairs do
+      assertEqualsDouble(hsl.x, hsv.x, 1e-9)
+      assertEqualsDouble(hsl.y, hsv.y, 1e-9)
+      assertEqualsDouble(hsl.z, hsv.z, 1e-9)
+    assert((pairs(0)._1.y - pairs(1)._1.y).abs > 0.01)
+
+  test("smoothed hsl variants wrap negative hues"):
+    for h <- Seq(0.1, 0.45, 0.8) do
+      val pos = Vec3(h, 0.7, 0.4)
+      val neg = Vec3(h - 1.0, 0.7, 0.4)
+      for (a, b) <- Seq(
+          (pos.hsl2rgbSmooth, neg.hsl2rgbSmooth),
+          (pos.hsl2rgbSmoother, neg.hsl2rgbSmoother),
+        )
+      do
+        assertEqualsDouble(b.x, a.x, 1e-9)
+        assertEqualsDouble(b.y, a.y, 1e-9)
+        assertEqualsDouble(b.z, a.z, 1e-9)
+
   test("kernel Into forms write into a caller-owned vector"):
     val out = new Vec3()
     val rgb = Color.kernel.hsv2rgbInto(0.0, 1.0, 1.0, out)
