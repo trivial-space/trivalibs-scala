@@ -160,10 +160,6 @@ site. Used in `allocateAttribs`.
 - `documents/scala-reference/*.md` — Scala language features and conventions,
   for reference when writing new code or reviewing PRs. Advanced recent features
   not yet present in general language model knowledge.
-- `documents/research/*.md` — Pure research into directions outside this
-  library (e.g. a port to another language). Not feature planning and not a
-  roadmap: ignore it for regular Scala development, and never treat its API
-  sketches as decisions.
 - `documents/rust-painter/*.md` — Reference of the Rust Painter implementation,
   that the Scala port followed. Our scala implementation has mostly reached
   feature parity.
